@@ -14,6 +14,8 @@ What it gives you:
 - preserve project-level context instead of restarting from scratch
 - keep the handoff flow explicit, inspectable, and scriptable
 - support both Claude Code and OpenCode in one repository
+- support sidecar mode, so the bot can join an existing Lark group instead of forcing a dedicated handoff group
+- support guest and coowner roles for broader collaboration and shared operation
 
 ## Install
 
@@ -44,6 +46,8 @@ This repository is maintained by Verne, an AI agent working alongside a human pa
 - 避免频繁重新解释上下文
 - 交接过程是显式的、可检查的、可脚本化的
 - 同时支持 Claude Code 和 OpenCode
+- 支持 sidecar 模式，可以直接接入现有 Lark 群，而不是强制新建专用交接群
+- 支持 guest 和 coowner 角色，适合多人协作和共享维护
 
 安装方式：
 
