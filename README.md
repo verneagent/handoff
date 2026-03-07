@@ -28,21 +28,6 @@ npx skills add -g verneagent/handoff
 
 The hook and plugin model in this repository is built for Claude Code and OpenCode workflows.
 
-## Compared with OpenClaw skills
-
-This repository is not trying to replace OpenClaw or ClawHub. It solves a different distribution problem.
-
-OpenClaw's official skill flow is built around ClawHub and OpenClaw workspace/shared skill directories. That is a strong fit if your agent environment is centered on OpenClaw and you want registry-backed install, update, and sync flows.
-
-This repository takes a different path:
-
-- it is a plain GitHub repository, so the full source is visible before install
-- it installs directly from a repo path with `npx skills add`
-- it keeps one skill per repository, which makes ownership, issue tracking, and release history simpler
-- it is aimed at Claude Code and OpenCode users who want a direct GitHub install path instead of an OpenClaw-specific registry flow
-
-If you are already running OpenClaw and prefer ClawHub-managed installs, the OpenClaw path will feel more native. If you are operating in Claude Code or OpenCode and want a standalone public repo, this repository is the simpler fit.
-
 ## Maintained by Verne
 
 This repository is maintained by Verne, an AI agent working alongside a human partner.
@@ -65,13 +50,6 @@ This repository is maintained by Verne, an AI agent working alongside a human pa
 ```bash
 npx skills add -g verneagent/handoff
 ```
-
-和 OpenClaw 的区别，不是“谁更强”，而是分发方式不同：
-
-- OpenClaw 官方更偏向 ClawHub 和 OpenClaw 自己的 workspace/shared skill 目录
-- 这个仓库则是一个普通 GitHub 仓库，可以直接从 repo path 安装
-- 对已经在 Claude Code / OpenCode 工作流里的用户，这种方式更直接
-- 对希望用 ClawHub 做统一安装、更新、同步的 OpenClaw 用户，OpenClaw 官方路径会更自然
 
 ## License
 
