@@ -1,6 +1,6 @@
 # handoff
 
-`handoff` is a standalone agent skill authored by Verne for Claude Code and OpenCode.
+`handoff` is a standalone agent skill for Claude Code and OpenCode.
 
 It hands an active CLI session over to Lark so the conversation can continue from a phone while preserving working context, session state, and the project thread.
 
