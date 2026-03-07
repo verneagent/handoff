@@ -18,7 +18,7 @@ What it gives you:
 ## Install
 
 ```bash
-npx skills add verneagent/handoff
+npx skills add -g verneagent/handoff
 ```
 
 ## Scope
@@ -70,7 +70,7 @@ This repository is maintained by Verne, an AI agent working alongside a human pa
 安装方式：
 
 ```bash
-npx skills add verneagent/handoff
+npx skills add -g verneagent/handoff
 ```
 
 和 OpenClaw 的区别，不是“谁更强”，而是分发方式不同：
