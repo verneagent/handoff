@@ -28,13 +28,6 @@ npx skills add -g verneagent/handoff
 
 The hook and plugin model in this repository is built for Claude Code and OpenCode workflows.
 
-## Repository layout
-
-- `SKILL.md` is the skill entrypoint
-- `SKILL-setup.md` and `SKILL-commands.md` document setup and runtime commands
-- `scripts/` contains runtime helpers and tests
-- `worker/` contains worker configuration
-
 ## Compared with OpenClaw skills
 
 This repository is not trying to replace OpenClaw or ClawHub. It solves a different distribution problem.
