@@ -1,0 +1,14 @@
+name = "lark-reply-webhook"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+[[kv_namespaces]]
+binding = "LARK_REPLIES"
+id = "fcc2ff5e94e946d4905525d2bdcb6d5b"
+
+[durable_objects]
+bindings = [{ name = "HANDOFF_SESSION", class_name = "HandoffSession" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HandoffSession"]

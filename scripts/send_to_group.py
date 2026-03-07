@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Send a message to the current handoff's Lark chat group.
+
+Used by handoff mode to send Claude's output to Lark.
+Each project gets its own Lark group. Messages are sent as
+top-level messages (no threading).
+"""
+
+import argparse
+import json
+import os
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+
+import handoff_config
+import handoff_db
+import handoff_worker
+import lark_im
+
+
+def warn(msg):
+    print(f"[handoff] {msg}", file=sys.stderr)
+
+
+def get_worktree_name():
+    """Get worktree name from git, falling back to project folder name."""
+    return handoff_config.get_worktree_name() or os.path.basename(handoff_config._require_project_dir())
+
+
+def find_groups_for_workspace(token, workspace_id, open_id=None):
+    """Find all Lark groups tagged with this workspace ID.
+
+    Groups store the workspace ID in their description field.
+    Requires workspace:{id} tag to match. If open_id is provided,
+    only returns chats where the user is an actual member.
+    Returns list of dicts: [{chat_id, name, description}].
+    """
+    workspace_tag = f"workspace:{workspace_id}"
+    groups = []
+    try:
+        chats = lark_im.list_bot_chats(token)
+        for chat in chats:
+            cid = chat.get("chat_id", "")
+            if not cid:
+                continue
+            try:
+                info = lark_im.get_chat_info(token, cid)
+                desc = info.get("description") or ""
+                if workspace_tag not in desc:
+                    continue
+                # If open_id is provided, verify user is a member of this chat
+                if open_id:
+                    try:
+                        members = lark_im.list_chat_members(token, cid)
+                        member_ids = {m.get("member_id") for m in members}
+                        if open_id not in member_ids:
+                            continue
+                    except Exception as e:
+                        warn(f"failed to check members of chat {cid}: {e}")
+                        continue
+                groups.append(
+                    {
+                        "chat_id": cid,
+                        "name": info.get("name", ""),
+                        "description": desc,
+                    }
+                )
+            except Exception as e:
+                warn(f"failed to inspect chat {cid}: {e}")
+                continue
+    except Exception as e:
+        warn(f"failed to list bot chats: {e}")
+    return groups
+
+
+def find_external_groups(token, open_id=None):
+    """Find Lark groups where bot is a member but NOT workspace-tagged.
+
+    These are "external" groups the bot was manually added to.
+    If open_id is provided, only returns chats where the user is a member.
+    Returns list of dicts: [{chat_id, name, description}].
+    """
+    groups = []
+    try:
+        chats = lark_im.list_bot_chats(token)
+        for chat in chats:
+            cid = chat.get("chat_id", "")
+            if not cid:
+                continue
+            try:
+                info = lark_im.get_chat_info(token, cid)
+                desc = info.get("description") or ""
+                # Skip workspace-tagged groups (those are regular handoff groups)
+                if "workspace:" in desc:
+                    continue
+                # If open_id is provided, verify user is a member of this chat
+                if open_id:
+                    try:
+                        members = lark_im.list_chat_members(token, cid)
+                        member_ids = {m.get("member_id") for m in members}
+                        if open_id not in member_ids:
+                            continue
+                    except Exception as e:
+                        warn(f"failed to check members of chat {cid}: {e}")
+                        continue
+                groups.append(
+                    {
+                        "chat_id": cid,
+                        "name": info.get("name", ""),
+                        "description": desc,
+                    }
+                )
+            except Exception as e:
+                warn(f"failed to inspect chat {cid}: {e}")
+                continue
+    except Exception as e:
+        warn(f"failed to list bot chats: {e}")
+    return groups
+
+
+def compute_next_group_name(worktree, machine, existing_names):
+    """Compute the next numbered group name.
+
+    First group: {worktree}@{machine}
+    Subsequent: {worktree}2@{machine}, {worktree}3@{machine}, etc.
+    """
+    base = f"{worktree}@{machine}"
+    if base not in existing_names:
+        return base
+    # Find highest suffix
+    max_n = 1
+    for name in existing_names:
+        if name == base:
+            continue
+        # Match {worktree}N@{machine}
+        prefix = f"{worktree}"
+        suffix = f"@{machine}"
+        if name.startswith(prefix) and name.endswith(suffix):
+            mid = name[len(prefix) : -len(suffix)]
+            try:
+                n = int(mid)
+                max_n = max(max_n, n)
+            except ValueError:
+                pass
+    return f"{worktree}{max_n + 1}@{machine}"
+
+
+def create_handoff_group(
+    token, open_id, worktree, machine, existing_names, workspace_id=None
+):
+    """Create a new handoff group with a numbered name.
+
+    Returns chat_id of the new group.
+    """
+    group_name = compute_next_group_name(worktree, machine, existing_names)
+    if not workspace_id:
+        workspace_id = handoff_config.get_workspace_id()
+    description = f"workspace:{workspace_id}"
+
+    chat_id = lark_im.create_chat(token, group_name, description=description)
+    try:
+        lark_im.add_chat_members(token, chat_id, [open_id])
+    except Exception as e:
+        try:
+            lark_im.dissolve_chat(token, chat_id)
+        except Exception as cleanup_error:
+            warn(f"failed to cleanup partially created chat {chat_id}: {cleanup_error}")
+        raise RuntimeError(f"Failed to add user {open_id} to group: {e}")
+    # Set group avatar
+    avatar_path = os.path.join(SCRIPT_DIR, "handoff_avatar.png")
+    if os.path.exists(avatar_path):
+        try:
+            lark_im.update_chat_avatar(token, chat_id, avatar_path)
+        except Exception as e:
+            warn(f"failed to set avatar for chat {chat_id}: {e}")
+    return chat_id
+
+
+def _reset_working_state():
+    """Clear the working card state so the next batch gets a fresh card."""
+    session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+    if not session_id:
+        return
+    handoff_db.clear_working_message(session_id)
+
+
+def send(token, chat_id, title, message, is_card, color, buttons=None,
+         mention_user_id=None):
+    """Send a top-level message to the group. Returns message_id.
+
+    mention_user_id: if provided, prepend an @-mention to the message body.
+    Used in sidecar mode to notify the operator of each response.
+    """
+    _reset_working_state()
+    # Prepend @-mention if requested (Lark Card V2 markdown syntax)
+    if mention_user_id:
+        message = f"<at id={mention_user_id}></at>\n{message}"
+    if is_card:
+        card = lark_im.build_card(
+            title, body=message, color=color, buttons=buttons, chat_id=chat_id
+        )
+        msg_id = lark_im.send_message(token, chat_id, card)
+    else:
+        # Use card for rich markdown formatting (lists, code, bold, etc.)
+        card = lark_im.build_markdown_card(message, title=title)
+        msg_id = lark_im.send_message(token, chat_id, card)
+    # Record in local DB so we can resolve parent_id on replies
+    try:
+        handoff_db.record_sent_message(msg_id, text=message, title=title, chat_id=chat_id)
+    except Exception as e:
+        warn(f"failed to record sent message {msg_id}: {e}")
+    # Register with worker so reactions can be routed to this chat
+    try:
+        worker_url = handoff_config.load_worker_url()
+        if worker_url:
+            handoff_worker.register_message(worker_url, msg_id, chat_id)
+    except Exception as e:
+        warn(f"failed to register message {msg_id} with worker: {e}")
+    return msg_id
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Send message to Lark handoff group",
+    )
+    parser.add_argument("message", help="Message text to send")
+    parser.add_argument("--color", default="blue", help="Card color (for --card mode)")
+    parser.add_argument("--title", default="", help="Title (optional)")
+    parser.add_argument(
+        "--card",
+        action="store_true",
+        help="Send as interactive card instead of rich text post",
+    )
+    parser.add_argument(
+        "--buttons",
+        default="",
+        help='JSON array of buttons: [["label","action_value","type"], ...]',
+    )
+    args = parser.parse_args()
+
+    # Interpret \n from CLI as real newlines
+    args.message = args.message.replace("\\n", "\n")
+
+    # Parse buttons
+    buttons = None
+    if args.buttons:
+        try:
+            buttons = json.loads(args.buttons)
+        except json.JSONDecodeError:
+            print("Error: invalid --buttons JSON", file=sys.stderr)
+            sys.exit(1)
+        # Buttons require card mode
+        args.card = True
+
+    try:
+        ctx = lark_im.resolve_session_context()
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    token, chat_id = ctx["token"], ctx["chat_id"]
+    title = args.title or ""
+
+    send(
+        token,
+        chat_id,
+        title,
+        args.message,
+        args.card,
+        args.color,
+        buttons=buttons,
+    )
+
+    print("Sent.")
+
+
+if __name__ == "__main__":
+    main()

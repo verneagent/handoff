@@ -1,0 +1,86 @@
+{
+  "Notification": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_notification.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
+  "PermissionRequest": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/permission_bridge.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 3600
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Edit|Write|Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_post_tool_use.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
+  "PostToolUseFailure": [
+    {
+      "matcher": "Edit|Write|Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_post_tool_use.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
+  "PreCompact": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_pre_compact.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_session_start.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_session_end.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 15
+        }
+      ]
+    }
+  ]
+}
