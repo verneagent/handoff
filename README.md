@@ -4,6 +4,8 @@
 
 It hands an active CLI session over to Lark so a human can temporarily leave the terminal without leaving the work, while preserving working context, session state, and the project thread.
 
+It is built around the native harness of Claude Code and OpenCode rather than trying to bolt a generic chat relay onto coding agents after the fact.
+
 ## Why this skill exists
 
 When a coding session becomes long, the weakest point is often not the model. It is the moment the human needs to step away. `handoff` exists so that stepping away from the terminal does not mean abandoning the same working thread.
@@ -15,6 +17,7 @@ What it gives you:
 - preserve project-level context instead of restarting from scratch
 - keep the handoff flow explicit, inspectable, and scriptable
 - support both Claude Code and OpenCode in one repository
+- stay native to the Claude Code / OpenCode harness instead of fighting their workflow model
 - support sidecar mode, so the bot can join an existing Lark group where teammates already are
 - support guest and coowner roles, so colleagues can help while the original operator is away
 
@@ -31,6 +34,8 @@ npx skills add -g verneagent/handoff
 
 The hook and plugin model in this repository is built for Claude Code and OpenCode workflows.
 
+That is why `handoff` fits best when you want handoff to feel native to the coding agent instead of layered awkwardly on top.
+
 ## 中文说明
 
 `handoff` 是一个独立的 agent skill，面向 Claude Code 和 OpenCode。
@@ -44,6 +49,7 @@ The hook and plugin model in this repository is built for Claude Code and OpenCo
 - 避免频繁重新解释上下文
 - 交接过程是显式的、可检查的、可脚本化的
 - 同时支持 Claude Code 和 OpenCode
+- 贴着 Claude Code / OpenCode 自己的 harness 工作，而不是事后硬接一个通用聊天转发层
 - 支持 sidecar 模式，可以直接接入现有 Lark 群，把同事拉进来一起帮忙
 - 支持 guest 和 coowner 角色，让其他人能接手协助，而不是所有操作都卡在单一 owner 身上
 
