@@ -75,6 +75,7 @@ def _check_schema(conn, table, expected_cols):
     ancient schemas, just drop and recreate — sessions are transient and
     message history is non-critical.
     """
+    # Safety: table names are hardcoded constants from _get_db(), never user input.
     info = conn.execute(f"PRAGMA table_info({table})").fetchall()
     if not info:
         return  # Table doesn't exist yet, will be created by caller

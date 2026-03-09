@@ -38,7 +38,12 @@ export class HandoffSession {
     }
 
     if (request.method === "POST" && url.pathname === "/push") {
-      const reply = await request.json();
+      let reply;
+      try {
+        reply = await request.json();
+      } catch (e) {
+        return Response.json({ error: "bad request" }, { status: 400 });
+      }
       this.replies.push(reply);
       await this.state.storage.put("replies", this.replies);
       // Schedule cleanup alarm if none is pending

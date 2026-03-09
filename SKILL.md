@@ -39,7 +39,7 @@ Not applicable. Do **NOT** use `dangerouslyDisableSandbox`. All `python3` / `cur
 
 ### Sub-commands
 
-`spawn` is Claude Code only (iTerm2 tabs). Omit it from the help table. The guard list covers `init`, `deinit`, `clear`, `delete_admin`, and `purge_admin`.
+The guard list covers `init`, `deinit`, `clear`, `delete_admin`, and `purge_admin`.
 
 ### Preflight
 

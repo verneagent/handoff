@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Tests for wait_for_reply.py — reply filters and result handling."""
+
+import json
+import os
+import sys
+import unittest
+from unittest.mock import patch, MagicMock
+
+SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPT_DIR)
+
+import wait_for_reply
+
+
+class FilterByOperatorTest(unittest.TestCase):
+    def test_no_operator(self):
+        """When no operator_open_id, all replies pass through."""
+        replies = [{"text": "a", "sender_id": "ou_1"}, {"text": "b", "sender_id": "ou_2"}]
+        result = wait_for_reply.filter_by_operator(replies, "")
+        self.assertEqual(len(result), 2)
+
+    def test_filters_non_operator(self):
+        replies = [
+            {"text": "a", "sender_id": "ou_1"},
+            {"text": "b", "sender_id": "ou_2"},
+        ]
+        result = wait_for_reply.filter_by_operator(replies, "ou_1")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "a")
+
+
+class FilterByAllowedSendersTest(unittest.TestCase):
+    def test_operator_gets_owner_privilege(self):
+        replies = [{"text": "a", "sender_id": "ou_op"}]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_guest": "guest"})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["privilege"], "owner")
+
+    def test_guest_gets_guest_privilege(self):
+        replies = [{"text": "a", "sender_id": "ou_guest"}]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_guest": "guest"})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["privilege"], "guest")
+
+    def test_coowner_gets_coowner_privilege(self):
+        replies = [{"text": "a", "sender_id": "ou_co"}]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_co": "coowner"})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["privilege"], "coowner")
+
+    def test_unknown_sender_filtered_out(self):
+        replies = [{"text": "a", "sender_id": "ou_unknown"}]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_guest": "guest"})
+        self.assertEqual(len(result), 0)
+
+    def test_no_allowed_passes_all(self):
+        replies = [{"text": "a", "sender_id": "ou_1"}]
+        result = wait_for_reply.filter_by_allowed_senders(replies, "", {})
+        self.assertEqual(len(result), 1)
+
+
+class FilterBotInteractionsTest(unittest.TestCase):
+    def test_reaction_always_passes(self):
+        replies = [{"text": "thumbsup", "msg_type": "reaction", "sender_id": "ou_1"}]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+
+    def test_sticker_always_passes(self):
+        replies = [{"text": "sticker", "msg_type": "sticker", "sender_id": "ou_1"}]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+
+    def test_mention_passes_and_strips(self):
+        replies = [{
+            "text": "@bot hello world",
+            "msg_type": "text",
+            "sender_id": "ou_1",
+            "mentions": [{"id": "ou_bot", "key": "@bot"}],
+        }]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "hello world")
+
+    @patch("wait_for_reply.handoff_db.is_bot_sent_message", return_value=True)
+    def test_reply_to_bot_passes(self, _mock):
+        replies = [{
+            "text": "reply text",
+            "msg_type": "text",
+            "sender_id": "ou_1",
+            "parent_id": "msg_123",
+        }]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+
+    @patch("wait_for_reply.handoff_db.is_bot_sent_message", return_value=False)
+    def test_unrelated_message_filtered(self, _mock):
+        replies = [{
+            "text": "random message",
+            "msg_type": "text",
+            "sender_id": "ou_1",
+        }]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 0)
+
+
+class HandleResultTest(unittest.TestCase):
+    @patch("wait_for_reply.handoff_db.set_session_last_checked")
+    @patch("wait_for_reply.handoff_db.record_received_message")
+    def test_outputs_json_to_stdout(self, mock_record, mock_set):
+        import io
+        replies = [{"text": "hi", "create_time": "12345", "message_id": "m1"}]
+        old_stdout = sys.stdout
+        sys.stdout = buf = io.StringIO()
+        try:
+            wait_for_reply.handle_result(replies, "https://w", "chat1", "sess1")
+        finally:
+            sys.stdout = old_stdout
+
+        output = json.loads(buf.getvalue())
+        self.assertEqual(output["count"], 1)
+        self.assertEqual(output["replies"][0]["text"], "hi")
+        mock_record.assert_called_once()
+        mock_set.assert_called_once_with("sess1", "12345")
+
+    @patch("wait_for_reply.handoff_db.set_session_last_checked")
+    @patch("wait_for_reply.handoff_db.record_received_message")
+    def test_no_session_id_skips_last_checked(self, mock_record, mock_set):
+        import io
+        replies = [{"text": "hi", "create_time": "12345"}]
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            wait_for_reply.handle_result(replies, "https://w", "chat1", None)
+        finally:
+            sys.stdout = old_stdout
+
+        mock_set.assert_not_called()
+
+
+class SendQuotaWarningTest(unittest.TestCase):
+    @patch("wait_for_reply.lark_im.send_message")
+    @patch("wait_for_reply.lark_im.get_tenant_token", return_value="token")
+    @patch("wait_for_reply.handoff_config.load_credentials",
+           return_value={"app_id": "a", "app_secret": "s"})
+    def test_sends_card(self, _creds, _token, mock_send):
+        result = wait_for_reply._send_quota_warning("chat1")
+        self.assertTrue(result)
+        mock_send.assert_called_once()
+        card = mock_send.call_args[0][2]
+        self.assertEqual(card["header"]["template"], "orange")
+
+    @patch("wait_for_reply.handoff_config.load_credentials", return_value=None)
+    def test_no_creds_returns_false(self, _creds):
+        result = wait_for_reply._send_quota_warning("chat1")
+        self.assertFalse(result)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -296,12 +296,8 @@ def report():
         path = os.path.expanduser(f"~/.claude/{fname}")
         if _has_handoff_hooks(path):
             print(f"  global/{fname}: has handoff hooks")
-        else:
-            try:
-                open(path).close()
-                print(f"  global/{fname}: (no handoff hooks)")
-            except FileNotFoundError:
-                pass  # skip missing global files silently
+        elif os.path.exists(path):
+            print(f"  global/{fname}: (no handoff hooks)")
 
     ok, detail = check_dual_install()
     if not ok:
