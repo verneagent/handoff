@@ -14,7 +14,7 @@ When invoked via `/handoff init`: run ALL steps. For each step where a value alr
 
 ## Before you begin: load existing values
 
-**Before** starting Step 1, run this command to load any existing config values. This handles both the nested `ims.lark` format and the legacy flat format:
+**Before** starting Step 1, run this command to load any existing config values:
 
 ```bash
 python3 -c "
@@ -23,9 +23,9 @@ for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills
     if os.path.exists(p):
         sys.path.insert(0, p)
         break
-import lark_im
-cfg = lark_im._load_config() or {}
-im = lark_im._resolve_im_config(cfg) or {}
+import handoff_config
+cfg = handoff_config._load_config() or {}
+im = handoff_config._resolve_im_config(cfg) or {}
 print(json.dumps({
     'worker_url': cfg.get('worker_url', ''),
     'worker_api_key': cfg.get('worker_api_key', ''),

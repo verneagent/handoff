@@ -164,9 +164,7 @@ def _load_config():
 def _resolve_im_config(raw):
     """Extract IM-specific credentials from a raw config dict.
 
-    Supports two formats:
-      - Nested: {"default_im": "lark", "ims": {"lark": {"app_id": ...}}}
-      - Flat (legacy): {"app_id": ..., "app_secret": ..., "email": ...}
+    Format: {"default_im": "lark", "ims": {"lark": {"app_id": ...}}}
 
     Returns dict with app_id/app_secret/email keys, or None if required
     fields are missing.
@@ -174,18 +172,15 @@ def _resolve_im_config(raw):
     if raw is None:
         return None
     ims = raw.get("ims")
-    if isinstance(ims, dict):
-        provider = raw.get("default_im", "lark")
-        im_cfg = ims.get(provider)
-        if not isinstance(im_cfg, dict):
-            return None
-        if not im_cfg.get("app_id") or not im_cfg.get("app_secret"):
-            return None
-        return im_cfg
-    # Legacy flat format
-    if not raw.get("app_id") or not raw.get("app_secret"):
+    if not isinstance(ims, dict):
         return None
-    return raw
+    provider = raw.get("default_im", "lark")
+    im_cfg = ims.get(provider)
+    if not isinstance(im_cfg, dict):
+        return None
+    if not im_cfg.get("app_id") or not im_cfg.get("app_secret"):
+        return None
+    return im_cfg
 
 
 def load_credentials():
@@ -229,9 +224,8 @@ def save_credentials(
     worker_url=None,
     worker_api_key=None,
 ):
-    """Save credentials to the config file in nested format.
+    """Save credentials to the config file.
 
-    Auto-migrates legacy flat configs to nested format on write.
     IM-specific fields (app_id, app_secret, email) go under ims.lark;
     infrastructure fields (worker_url, worker_api_key) stay top-level.
     """
@@ -244,15 +238,8 @@ def save_credentials(
         except (json.JSONDecodeError, FileNotFoundError):
             pass
 
-    # Migrate flat → nested if needed
-    if "ims" not in raw:
-        im_fields = {}
-        for key in ("app_id", "app_secret", "email"):
-            val = raw.pop(key, None)
-            if val:
-                im_fields[key] = val
-        raw.setdefault("default_im", "lark")
-        raw["ims"] = {"lark": im_fields}
+    raw.setdefault("default_im", "lark")
+    raw.setdefault("ims", {})
 
     provider = raw.get("default_im", "lark")
     im_cfg = raw["ims"].setdefault(provider, {})

@@ -31,17 +31,19 @@ def check_credentials():
             f"Fix the syntax or delete it and run /handoff init to recreate."
         )
 
-    # Resolve IM-specific config (nested or flat)
+    # Resolve IM-specific config
     ims = data.get("ims")
-    if isinstance(ims, dict):
-        provider = data.get("default_im", "lark")
-        im_cfg = ims.get(provider)
-        if not isinstance(im_cfg, dict):
-            return False, (
-                f"No config for IM provider '{provider}' in {handoff_config.CONFIG_FILE}"
-            )
-    else:
-        im_cfg = data
+    if not isinstance(ims, dict):
+        return False, (
+            f"Missing 'ims' section in {handoff_config.CONFIG_FILE}\n"
+            f"Run /handoff init to configure."
+        )
+    provider = data.get("default_im", "lark")
+    im_cfg = ims.get(provider)
+    if not isinstance(im_cfg, dict):
+        return False, (
+            f"No config for IM provider '{provider}' in {handoff_config.CONFIG_FILE}"
+        )
 
     missing = []
     if not im_cfg.get("app_id"):

@@ -87,8 +87,16 @@ class CheckCredentialsTest(PreflightTestBase):
         self.assertFalse(ok)
         self.assertIn("invalid JSON", detail)
 
-    def test_missing_fields(self):
+    def test_missing_ims_section(self):
         self._write_config({"app_id": "a"})
+        ok, detail = preflight.check_credentials()
+        self.assertFalse(ok)
+        self.assertIn("ims", detail)
+
+    def test_missing_fields(self):
+        self._write_config({
+            "ims": {"lark": {"app_id": "a"}},
+        })
         ok, detail = preflight.check_credentials()
         self.assertFalse(ok)
         self.assertIn("app_secret", detail)
@@ -96,7 +104,7 @@ class CheckCredentialsTest(PreflightTestBase):
 
     def test_valid_credentials(self):
         self._write_config({
-            "app_id": "a", "app_secret": "s", "email": "e@example.com"
+            "ims": {"lark": {"app_id": "a", "app_secret": "s", "email": "e@example.com"}},
         })
         ok, detail = preflight.check_credentials()
         self.assertTrue(ok)
@@ -394,11 +402,9 @@ class MainFlowTest(PreflightTestBase):
 
     def test_all_checks_pass(self):
         self._write_config({
-            "app_id": "a",
-            "app_secret": "s",
-            "email": "e@e.com",
             "worker_url": "https://w.example",
             "worker_api_key": "k",
+            "ims": {"lark": {"app_id": "a", "app_secret": "s", "email": "e@e.com"}},
         })
         handoff_config.load_worker_url = lambda: "https://w.example"
         handoff_config.load_api_key = lambda: "k"
@@ -426,9 +432,7 @@ class MainFlowTest(PreflightTestBase):
 
     def test_report_flag(self):
         self._write_config({
-            "app_id": "a",
-            "app_secret": "secret123",
-            "email": "e@e.com",
+            "ims": {"lark": {"app_id": "a", "app_secret": "secret123", "email": "e@e.com"}},
         })
         handoff_config.load_credentials = lambda: {
             "app_id": "a", "app_secret": "secret123"
