@@ -247,6 +247,16 @@ function getStub(env, key) {
   return env.HANDOFF_SESSION.get(id);
 }
 
+function isDOQuotaError(e) {
+  const msg = (e && e.message) || "";
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("exceeded allowed duration") ||
+    lower.includes("durable objects free tier") ||
+    lower.includes("exceeded its cpu time limit")
+  );
+}
+
 async function pushToDO(env, key, reply) {
   const stub = getStub(env, key);
   await stub.fetch(
@@ -289,6 +299,21 @@ export default {
       return Response.json({
         ok: true,
         verify_token: !!env.VERIFY_TOKEN,
+      });
+    }
+
+    // DO quota status (requires API_KEY auth, no DO access)
+    if (request.method === "GET" && url.pathname.startsWith("/status/")) {
+      const denied = checkApiKey(request, env);
+      if (denied) return denied;
+      const key = decodeURIComponent(url.pathname.split("/status/")[1]);
+      if (!key) {
+        return Response.json({ error: "missing key" }, { status: 400 });
+      }
+      const exhaustedAt = await env.LARK_REPLIES.get(`do_quota_exhausted:${key}`);
+      return Response.json({
+        do_quota_exhausted: !!exhaustedAt,
+        exhausted_at: exhaustedAt || null,
       });
     }
 
@@ -475,7 +500,23 @@ async function handleWebhook(request, env) {
   }
 
   if (header.event_type === "im.message.receive_v1") {
-    await handleMessage(event, env);
+    try {
+      await handleMessage(event, env);
+    } catch (e) {
+      if (isDOQuotaError(e)) {
+        const chatId = (event.message || {}).chat_id;
+        if (chatId) {
+          await env.LARK_REPLIES.put(
+            `do_quota_exhausted:chat:${chatId}`,
+            String(Date.now()),
+            { expirationTtl: 3600 },
+          );
+        }
+        console.error("DO quota exhausted on message push:", e.message);
+      } else {
+        throw e;
+      }
+    }
   }
 
   if (header.event_type === "im.message.reaction.created_v1") {

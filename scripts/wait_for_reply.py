@@ -111,6 +111,48 @@ def filter_bot_interactions(replies, bot_open_id):
     return filtered
 
 
+def _send_quota_warning(chat_id):
+    """Send a warning card to the Lark chat about DO quota exhaustion.
+
+    Returns True if the warning was sent successfully, False otherwise.
+    """
+    try:
+        import handoff_config
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return False
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        card = {
+            "header": {
+                "title": {"tag": "plain_text", "content": "Worker quota exhausted"},
+                "template": "orange",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": (
+                            "⚠️ The Cloudflare Durable Objects free tier quota has been "
+                            "exceeded. Messages sent here **will not reach Claude** until "
+                            "the quota resets (daily).\n\n"
+                            "Claude is still waiting and will resume automatically once "
+                            "the quota resets.\n\n"
+                            "To fix permanently: upgrade to Workers Paid ($5/month) in the "
+                            "Cloudflare dashboard."
+                        ),
+                    },
+                },
+            ],
+        }
+        lark_im.send_message(token, chat_id, card)
+        warn("sent DO quota warning card to Lark chat")
+        return True
+    except Exception as e:
+        warn(f"failed to send DO quota warning card: {e}")
+        return False
+
+
 def fetch_replies_http(worker_url, chat_id, since):
     """HTTP long-poll the worker for replies. Returns (replies, takeover, error)."""
     result = handoff_worker.poll_worker(worker_url, chat_id, since)
@@ -201,6 +243,7 @@ def main():
     deadline = None if args.timeout <= 0 else time.time() + args.timeout
     backoff = args.interval
     use_ws = not args.no_ws
+    quota_warned = False  # Send the Lark warning card at most once per session
 
     while deadline is None or time.time() < deadline:
         # --- Try WebSocket first (much lower quota usage) ---
@@ -243,6 +286,8 @@ def main():
                 since,
             )
             if error:
+                if not quota_warned and handoff_worker.is_do_quota_error(error):
+                    quota_warned = _send_quota_warning(chat_id)
                 jitter = random.uniform(0, backoff)
                 print(
                     f"[handoff] {error} — retrying in {jitter:.1f}s "

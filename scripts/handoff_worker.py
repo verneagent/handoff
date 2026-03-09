@@ -16,6 +16,21 @@ import urllib.parse
 
 from handoff_config import load_api_key, _worker_auth_headers
 
+# Errors that indicate the Cloudflare Durable Objects free tier quota is exhausted.
+_DO_QUOTA_PATTERNS = [
+    "exceeded allowed duration",
+    "durable objects free tier",
+    "exceeded its cpu time limit",
+]
+
+
+def is_do_quota_error(error_msg):
+    """Return True if the error indicates a Durable Objects quota exhaustion."""
+    if not error_msg:
+        return False
+    lower = error_msg.lower()
+    return any(p in lower for p in _DO_QUOTA_PATTERNS)
+
 
 def poll_worker(worker_url, chat_id, since=None, key=None):
     """Long-poll the worker for replies from a handoff group.
@@ -504,3 +519,29 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
     except Exception as e:
         # Non-critical — stale replies just get cleaned up eventually
         print(f"[handoff] ack_worker_replies error: {e}", file=sys.stderr)
+
+
+def check_do_quota_status(worker_url, chat_id):
+    """Check if the DO quota is exhausted for this chat (via KV, no DO access).
+
+    Returns the exhausted_at timestamp string if exhausted, or None.
+    """
+    import subprocess
+
+    do_key = f"chat:{chat_id}"
+    url = f"{worker_url}/status/{do_key}"
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "--max-time", "5", *_worker_auth_headers(), url],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+        if data.get("do_quota_exhausted"):
+            return data.get("exhausted_at")
+    except Exception:
+        pass
+    return None

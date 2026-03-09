@@ -125,6 +125,7 @@ def main():
 
     deadline = None if args.timeout <= 0 else time.time() + args.timeout
     backoff = 3
+    quota_warned = False
 
     while deadline is None or time.time() < deadline:
         # --- Try WebSocket first ---
@@ -158,6 +159,8 @@ def main():
                 worker_url, chat_id, since
             )
             if error:
+                if not quota_warned and handoff_worker.is_do_quota_error(error):
+                    quota_warned = wait_for_reply._send_quota_warning(chat_id)
                 jitter = random.uniform(0, backoff)
                 warn(f"{error} — retrying in {jitter:.1f}s")
                 time.sleep(jitter)
