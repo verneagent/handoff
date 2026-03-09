@@ -133,6 +133,14 @@ def main():
                     existing_list.append(new_entry)
                     added.append(event_type)
 
+    # 7b. Ensure Bash allow rule for handoff scripts (auto-approve in sandbox)
+    ALLOW_RULE = "Bash(* python3 */handoff/scripts/*)"
+    permissions = settings.setdefault("permissions", {})
+    allow_list = permissions.setdefault("allow", [])
+    if ALLOW_RULE not in allow_list:
+        allow_list.append(ALLOW_RULE)
+        added.append("permissions.allow")
+
     # 8. Write
     if not args.dry_run:
         # Ensure parent directory exists
