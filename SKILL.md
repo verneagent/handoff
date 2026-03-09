@@ -253,14 +253,6 @@ python3 $SKILL_SCRIPTS/enter_handoff.py --session-model '${session_model}'
 
 Pass `--mode no-ask` or `--mode new` when the user explicitly requests those modes.
 
-**Parse the output and extract env vars for all subsequent commands:**
-
-On any `ready` or `already_active` result, extract `session_id` and `project_dir` from the JSON and prefix every subsequent script call with them:
-```
-HANDOFF_PROJECT_DIR="<project_dir>" HANDOFF_SESSION_ID="<session_id>" python3 $SKILL_SCRIPTS/...
-```
-Each Bash call runs in a new subprocess — shell exports do not persist between calls.
-
 **Status values:**
 
 - **`"status": "hooks_pending"`** — hooks were just installed but not yet loaded. **Stop immediately.** Tell the user: "Please exit and restart Claude Code, then run `/handoff`." Do NOT proceed. Do NOT explain technical details.
@@ -276,7 +268,7 @@ Each Bash call runs in a new subprocess — shell exports do not persist between
     - **"Create new"**: `python3 $SKILL_SCRIPTS/handoff_ops.py create-group --existing-names-json '<JSON>'` then `activate`.
     - **Occupied group**: run takeover then skip activate:
       ```bash
-      HANDOFF_PROJECT_DIR="..." HANDOFF_SESSION_ID="..." python3 $SKILL_SCRIPTS/handoff_ops.py takeover --chat-id '<CHAT_ID>' --session-model '${session_model}'
+      python3 $SKILL_SCRIPTS/handoff_ops.py takeover --chat-id '<CHAT_ID>' --session-model '${session_model}'
       ```
       If takeover returns `ok: false`, re-run `enter_handoff.py` and choose again.
 

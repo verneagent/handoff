@@ -63,11 +63,9 @@ def main():
             warn(f"failed to persist env vars to env file: {e}")
 
     # Write per-session cache file as fallback for session_id resolution.
-    # CLAUDE_ENV_FILE is empty for globally-installed SessionStart hooks (known Claude Code
-    # bug: https://github.com/anthropics/claude-code/issues/15840), so we can't rely on it.
-    # We store ancestor PIDs so enter_handoff.py can identify the correct session by
-    # intersecting its own ancestor chain with the stored one. This handles variable
-    # process tree depth (hook may be spawned via shell wrapper or directly).
+    # CLAUDE_ENV_FILE works on Claude Code ≥2.1.45, but we keep this cache
+    # as a fallback for older versions and edge cases. enter_handoff.py can
+    # identify the correct session by intersecting ancestor PID chains.
     if session_id:
         try:
             # Use a fixed path, NOT $TMPDIR. Hooks get the system TMPDIR
