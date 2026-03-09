@@ -762,6 +762,8 @@ def get_unprocessed_messages(chat_id):
             "SELECT text, source_message_id, message_time FROM messages"
             " WHERE chat_id = ? AND direction = 'received'"
             "   AND message_time > ?"
+            "   AND source_message_id IS NOT NULL"
+            "   AND source_message_id != ''"
             " ORDER BY message_time ASC",
             (chat_id, last_sent_ts),
         ).fetchall()

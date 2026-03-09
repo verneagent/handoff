@@ -435,7 +435,8 @@ class PermissionCardsTest(unittest.TestCase):
 
         class FakeLark:
             @staticmethod
-            def build_card(title, body=None, color=None, buttons=None, chat_id=None, nonce=None):
+            def build_card(title, body=None, color=None, buttons=None, chat_id=None, nonce=None,
+                           extra_value=None):
                 calls["build"].append(
                     {
                         "title": title,
@@ -444,6 +445,7 @@ class PermissionCardsTest(unittest.TestCase):
                         "buttons": buttons,
                         "chat_id": chat_id,
                         "nonce": nonce,
+                        "extra_value": extra_value,
                     }
                 )
                 return {"title": title, "body": body}

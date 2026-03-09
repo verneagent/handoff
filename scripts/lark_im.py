@@ -108,7 +108,8 @@ def resolve_session_context():
 # ---------------------------------------------------------------------------
 
 
-def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=None):
+def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=None,
+               extra_value=None):
     """Build a card dict with optional action buttons.
 
     buttons: list of (label, action_value, button_type) tuples.
@@ -116,6 +117,7 @@ def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=N
     chat_id: chat ID for routing callbacks.
     nonce: optional unique ID for correlating this card's button clicks
         with the specific poll loop waiting for them.
+    extra_value: optional dict merged into each button's value payload.
     """
     elements = []
     if body and body.strip():
@@ -132,6 +134,8 @@ def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=N
     }
     if nonce:
         _value_base["nonce"] = nonce
+    if extra_value:
+        _value_base.update(extra_value)
     if buttons:
         actions = []
         for label, action_value, button_type in buttons:

@@ -421,7 +421,15 @@ async function handleWebhook(request, env) {
 
   // Card action callback (v2: header.event_type === "card.action.trigger")
   if (header.event_type === "card.action.trigger") {
-    await handleCardAction(event, env);
+    const result = await handleCardAction(event, env);
+
+    // Unauthorized sender — return error toast, keep card unchanged
+    if (result && result.unauthorized) {
+      return Response.json({
+        toast: { type: "error", content: "Only the operator or coowners can decide" },
+      });
+    }
+
     const action = event.action || {};
     const value = action.value || {};
     const title = value.title || "Confirmed";
@@ -429,6 +437,13 @@ async function handleWebhook(request, env) {
 
     // Use shared extraction so display matches stored reply
     const { text: displayText } = extractActionInfo(action);
+
+    // Determine card color based on action: red for deny, green for approve
+    const DENY_TEXTS = new Set(["n", "no", "deny", "reject", "0"]);
+    const isDeny = DENY_TEXTS.has(displayText.toLowerCase());
+    const template = isDeny ? "red" : "green";
+    const toastType = isDeny ? "warning" : "success";
+    const toastVerb = isDeny ? "Denied" : "Got it";
 
     const elements = [];
     if (body) {
@@ -445,13 +460,13 @@ async function handleWebhook(request, env) {
       },
     });
     return Response.json({
-      toast: { type: "success", content: `Got it: ${displayText}` },
+      toast: { type: toastType, content: `${toastVerb}: ${displayText}` },
       card: {
         type: "raw",
         data: {
           header: {
             title: { tag: "plain_text", content: title },
-            template: "green",
+            template,
           },
           elements,
         },
@@ -626,6 +641,16 @@ async function handleCardAction(event, env) {
   const { text: actionText, msgType } = extractActionInfo(action);
 
   if ((!rootId && !chatId && !nonce) || !actionText) return;
+
+  // Check approver authorization: if the card carries an approvers list,
+  // only those open_ids may approve/deny. Others see an error toast.
+  const approvers = value.approvers;
+  if (Array.isArray(approvers) && approvers.length > 0) {
+    const operatorId = operator.open_id || "";
+    if (!approvers.includes(operatorId)) {
+      return { unauthorized: true };
+    }
+  }
 
   // Store as a reply so wait_for_reply.py / permission_bridge.py picks it up
   const reply = {

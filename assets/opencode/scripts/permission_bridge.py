@@ -102,6 +102,7 @@ def main():
                 worker_url, chat_id, before, api_key=api_key, log_fn=_log, key=key,
             ),
             log_fn=_log,
+            approver_ids=approver_ids,
         )
     except Exception as e:
         _log(f"card send failed: {e}")

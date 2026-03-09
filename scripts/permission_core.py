@@ -49,9 +49,13 @@ def permission_buttons():
 
 
 def send_permission_request_card(
-    lark_im_mod, token, chat_id, tool_name, message, nonce=None
+    lark_im_mod, token, chat_id, tool_name, message, nonce=None,
+    approver_ids=None,
 ):
     body = build_permission_body(tool_name, message)
+    extra_value = {}
+    if approver_ids:
+        extra_value["approvers"] = sorted(approver_ids)
     card = lark_im_mod.build_card(
         "Permission Request",
         body=body,
@@ -59,6 +63,7 @@ def send_permission_request_card(
         buttons=permission_buttons(),
         chat_id=chat_id,
         nonce=nonce,
+        extra_value=extra_value or None,
     )
     lark_im_mod.send_message(token, chat_id, card)
 
@@ -84,6 +89,7 @@ def generate_nonce():
 
 def prepare_permission_request(
     lark_im_mod, token, chat_id, tool_name, message, ack_fn, log_fn=None,
+    approver_ids=None,
 ):
     """Generate nonce, ack stale replies, and send the permission card.
 
@@ -112,7 +118,8 @@ def prepare_permission_request(
         log_fn("acked old replies")
 
     send_permission_request_card(
-        lark_im_mod, token, chat_id, tool_name, message, nonce=nonce
+        lark_im_mod, token, chat_id, tool_name, message, nonce=nonce,
+        approver_ids=approver_ids,
     )
 
     if log_fn:
