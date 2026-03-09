@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import time
+import urllib.request
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
@@ -537,6 +538,60 @@ def cmd_parent_api(args):
     msg = lark_im.get_message(token, args.parent_id)
     text, msg_type = lark_im.extract_message_text(msg)
     _jprint({"source": "api", "msg_type": msg_type, "text": text})
+    return 0
+
+
+def cmd_send_image(args):
+    """Upload a local image and send it to the active handoff chat."""
+    creds = _require_credentials()
+    token = _require_token(creds)
+    chat_id = _require_active_chat_id()
+    image_key = lark_im.upload_image(token, args.path)
+    payload = {
+        "receive_id": chat_id,
+        "msg_type": "image",
+        "content": json.dumps({"image_key": image_key}),
+    }
+    req = urllib.request.Request(
+        f"{lark_im.BASE_URL}/im/v1/messages?receive_id_type=chat_id",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    msg_id = data.get("data", {}).get("message_id", "")
+    handoff_db.record_sent_message(msg_id, text=args.path, title="[image]", chat_id=chat_id)
+    _jprint({"ok": True, "image_key": image_key, "message_id": msg_id})
+    return 0
+
+
+def cmd_send_file(args):
+    """Upload a local file and send it to the active handoff chat."""
+    creds = _require_credentials()
+    token = _require_token(creds)
+    chat_id = _require_active_chat_id()
+    file_key = lark_im.upload_file(token, args.path, file_type=args.file_type)
+    payload = {
+        "receive_id": chat_id,
+        "msg_type": "file",
+        "content": json.dumps({"file_key": file_key}),
+    }
+    req = urllib.request.Request(
+        f"{lark_im.BASE_URL}/im/v1/messages?receive_id_type=chat_id",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    msg_id = data.get("data", {}).get("message_id", "")
+    handoff_db.record_sent_message(msg_id, text=args.path, title="[file]", chat_id=chat_id)
+    _jprint({"ok": True, "file_key": file_key, "message_id": msg_id})
     return 0
 
 
@@ -1483,6 +1538,16 @@ def build_parser():
     s = sub.add_parser("parent-api")
     s.add_argument("--parent-id", required=True)
     s.set_defaults(func=cmd_parent_api)
+
+    s = sub.add_parser("send-image")
+    s.add_argument("path", help="Local path to image file")
+    s.set_defaults(func=cmd_send_image)
+
+    s = sub.add_parser("send-file")
+    s.add_argument("path", help="Local path to file")
+    s.add_argument("--file-type", default="stream",
+                   choices=["opus", "mp4", "pdf", "doc", "xls", "ppt", "stream"])
+    s.set_defaults(func=cmd_send_file)
 
     s = sub.add_parser("download-image")
     s.add_argument("--image-key", required=True)

@@ -574,7 +574,13 @@ Keep the message concise — Lark has size limits. For long output, summarize an
   - **ABSOLUTE RULE**: Do NOT send "waiting" or "still here" messages during idle periods. Stay silent and continue waiting.
   - **EXCEPTION**: Only send status updates for: (a) meaningful state changes, (b) explicit user requests, or (c) long-running work in progress (>60s tasks).
   - For `send_and_wait.py` timeouts, the message was already sent — call `wait_for_reply.py` to resume waiting only (no re-send).
-- **"Send XX to me" = file attachment.** When the user asks to send something that is a file (e.g. "把 SKILL.md 发给我"), upload it as a Lark file attachment using `lark_im.upload_file()` and send as a file message. Do NOT paste the file content as text.
+- **"Send XX to me" = file attachment.** When the user asks to send something that is a file (e.g. "把 SKILL.md 发给我"), use `handoff_ops.py send-file` to upload and send it. Do NOT paste the file content as text.
+- **Sending images and files.** Always use the `handoff_ops.py` commands — they resolve the correct chat from `HANDOFF_SESSION_ID`:
+  ```bash
+  python3 $SKILL_SCRIPTS/handoff_ops.py send-image /path/to/image.png
+  python3 $SKILL_SCRIPTS/handoff_ops.py send-file /path/to/file.pdf [--file-type pdf]
+  ```
+  **NEVER** write ad-hoc Python to send images/files — `get_active_sessions()[0]` may pick the wrong group when multiple sessions exist.
 - **Commit hash links.** When mentioning commit hashes in Lark messages, format them as clickable links to the GitHub commit page: [`hash`](https://github.com/<org>/<repo>/commit/<hash>). Derive the org/repo from `git remote get-url origin`.
 - **Reaction routing.** When `send_to_group.py` sends a message, it automatically registers the message with the worker via `register_message()`. This allows the worker to route emoji reactions on bot messages back to the handoff session. Reactions arrive as `msg_type: "reaction"` with `text` containing the emoji type (e.g. `"THUMBSUP"`). No special handling is needed — this works automatically.
 - **Sticker & reaction etiquette.** Be natural, never robotic.
