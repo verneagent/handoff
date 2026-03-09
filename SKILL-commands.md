@@ -83,7 +83,7 @@ Reverse of `/handoff init`: collect all decisions upfront, confirm once, then ex
 
 4. **Execute in one batch:**
 
-   - **Remove Claude Code hooks:** For each settings file with handoff hooks, remove only entries whose `command` contains `handoff/scripts/`. Also remove `"Bash(* python3 */handoff/scripts/*)"` from `permissions.allow` if present. Leave non-handoff entries untouched. Use the `Edit` tool.
+   - **Remove Claude Code hooks:** For each settings file with handoff hooks, remove only entries whose `command` contains `handoff/scripts/`. Leave non-handoff entries untouched. Use the `Edit` tool.
    - **Remove OpenCode plugin files** (restore to skill assets first, then delete):
      ```bash
      SKILL=".claude/skills/handoff"
