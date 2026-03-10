@@ -389,7 +389,7 @@ Filter levels control PostToolUse forwarding to Lark:
 - **NOT allowed**: Run shell commands, git operations, read/modify existing project files, access secrets (.env, credentials, API keys), create files under the project directory
 - **Permission requests**: Permission cards (Approve/Deny) are only processed from the owner and coowners. Guest button clicks are ignored.
 - **Owner override**: Owner commands always take priority. If the owner says "stop", halt any guest-requested work immediately.
-- When replying to a guest, use `--mention-user-id` on `send_and_wait.py` to @-mention them:
+- When replying to a guest, use `--mention-user-id` on `send_and_wait.py` to @-mention them (see also the general **@-mention targeting** rule in Important Notes):
   ```bash
   python3 $SKILL_SCRIPTS/send_and_wait.py '<response>' --mention-user-id '<guest_open_id>'
   ```
@@ -549,6 +549,7 @@ Keep the message concise — Lark has size limits. For long output, summarize an
 - **Keepalive scope is narrow.** "Continue loop"/"keep waiting" behavior is for idle periods only. It must not override pending user tasks from Lark.
 - **No false CLI requirement.** While handoff is active, do not claim that coding requires switching back to CLI. Perform code work directly in the active handoff session.
 - **NEVER use AskUserQuestion or EnterPlanMode during the handoff loop.** These tools show prompts only in the CLI, which the user cannot see during Handoff mode. Instead, send your question to Lark via `send_and_wait.py` (which also waits for the reply). Format questions with numbered options so the user can reply with just a number. (Note: AskUserQuestion IS used during CLI-mode setup in Steps 1-4 of the Guided Setup, which runs *before* entering the handoff loop.)
+- **@-mention targeting in multi-person groups.** When the group has 2+ humans (excluding the bot itself) and your response is directed at a specific person (e.g., they asked a question, a task was done for them, or you're answering their request), always @-mention them using `--mention-user-id '<their_open_id>'` on `send_and_wait.py` or `send_to_group.py`. This ensures the right person gets notified. Extract the `open_id` from the `sender_id` field of the message you're responding to. If only one human is in the group (just the owner), no @-mention is needed.
 - **Confirmations and permissions**: Before any destructive or irreversible action (git push, merge, delete, etc.), send a confirmation message to Lark and wait for the user's reply. Do NOT proceed without explicit Lark confirmation.
 - **Option selections** — Choose the right format:
   - **2 options (yes/no, approve/deny):** Use **button cards** (`build_card` with `buttons`). Quick tap, no submit needed.
