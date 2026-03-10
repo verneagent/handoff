@@ -104,8 +104,6 @@ def check_worker_reachable(worker_url):
                 "Check that worker_api_key in config matches the API_KEY secret on the worker."
             )
         data = json.loads(result.stdout)
-        if not data.get("ok"):
-            return False, f"Worker returned unexpected response: {result.stdout[:200]}"
     except Exception as e:
         return False, f"Worker unreachable: {e}"
 
@@ -116,6 +114,9 @@ def check_worker_reachable(worker_url):
             "Set it: cd .claude/skills/handoff/worker && npx wrangler secret put VERIFY_TOKEN\n"
             "Use the Verification Token from your Lark app's Event Subscriptions page."
         )
+    # Warn (non-fatal) if Durable Objects are unavailable
+    if data.get("do_available") is False:
+        return True, f"do_unavailable:{data.get('reason', 'unknown')}"
     return True, None
 
 
@@ -260,7 +261,11 @@ def report():
     if worker_url:
         worker_ok, worker_detail = check_worker_reachable(worker_url)
         if worker_ok:
-            print("  Worker health: OK")
+            if worker_detail and worker_detail.startswith("do_unavailable:"):
+                reason = worker_detail.split(":", 1)[1]
+                print(f"  Worker health: OK (DO unavailable: {reason})")
+            else:
+                print("  Worker health: OK")
         else:
             print(f"  Worker health: FAIL ({worker_detail})")
     else:
@@ -405,7 +410,12 @@ def main():
     if worker_url:
         ok, detail = check_worker_reachable(worker_url)
         if ok:
-            print(f"  [OK] Worker reachable")
+            if detail and detail.startswith("do_unavailable:"):
+                reason = detail.split(":", 1)[1]
+                print(f"  [WARN] Worker reachable but DO unavailable: {reason}")
+                warnings.append(f"Durable Objects unavailable: {reason}")
+            else:
+                print(f"  [OK] Worker reachable")
         else:
             print(f"  [FAIL] Worker reachable: {detail}")
             errors.append(detail)

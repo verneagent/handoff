@@ -301,9 +301,28 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") {
       const denied = checkApiKey(request, env);
       if (denied) return denied;
+      // Probe Durable Object availability
+      let doStatus = "ok";
+      try {
+        const stub = getStub(env, "health-check");
+        await stub.fetch(new Request("http://do/get"));
+      } catch (e) {
+        doStatus = isDOQuotaError(e)
+          ? "quota_exhausted"
+          : `error: ${e.message || e}`;
+      }
+      const doAvailable = doStatus === "ok";
+      const hasVerifyToken = !!env.VERIFY_TOKEN;
+      const ok = doAvailable && hasVerifyToken;
+      const reasons = [];
+      if (doStatus === "quota_exhausted") reasons.push("Durable Objects quota exhausted");
+      else if (!doAvailable) reasons.push(`Durable Objects ${doStatus}`);
+      if (!hasVerifyToken) reasons.push("VERIFY_TOKEN not configured");
       return Response.json({
-        ok: true,
-        verify_token: !!env.VERIFY_TOKEN,
+        ok,
+        verify_token: hasVerifyToken,
+        do_available: doAvailable,
+        ...(reasons.length > 0 && { reason: reasons.join("; ") }),
       });
     }
 
