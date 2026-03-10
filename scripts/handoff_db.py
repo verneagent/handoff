@@ -51,6 +51,7 @@ _SESSIONS_COLS = {
 _CHAT_PREFS_COLS = {
     "chat_id",
     "message_filter",
+    "autoapprove",
 }
 _WORKING_STATE_COLS = {
     "session_id",
@@ -130,7 +131,8 @@ def _get_db():
         conn.execute(
             "CREATE TABLE IF NOT EXISTS chat_preferences ("
             "  chat_id TEXT NOT NULL PRIMARY KEY,"
-            "  message_filter TEXT NOT NULL DEFAULT 'concise'"
+            "  message_filter TEXT NOT NULL DEFAULT 'concise',"
+            "  autoapprove INTEGER NOT NULL DEFAULT 0"
             ")"
         )
         conn.execute(
@@ -375,6 +377,7 @@ def get_session(session_id):
             " , s.bot_open_id"
             " , s.sidecar_mode"
             " , s.guests"
+            " , p.autoapprove"
             " FROM sessions s"
             " LEFT JOIN chat_preferences p ON s.chat_id = p.chat_id"
             " WHERE s.session_id = ?",
@@ -398,6 +401,7 @@ def get_session(session_id):
                 "bot_open_id": row[8] or "",
                 "sidecar_mode": bool(row[9]),
                 "guests": guests,
+                "autoapprove": bool(row[11]),
             }
         return None
     finally:
@@ -424,6 +428,39 @@ def set_message_filter(chat_id, level):
             (chat_id, level, level),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def set_autoapprove(chat_id, enabled):
+    """Enable or disable autoapprove for a chat group.
+
+    Persists in chat_preferences table (survives session changes).
+    When enabled, permission requests are auto-approved without asking the user.
+    """
+    val = 1 if enabled else 0
+    conn = _get_db()
+    try:
+        conn.execute(
+            "INSERT INTO chat_preferences (chat_id, autoapprove)"
+            " VALUES (?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET autoapprove = ?",
+            (chat_id, val, val),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_autoapprove(chat_id):
+    """Check if autoapprove is enabled for a chat group."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT autoapprove FROM chat_preferences WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        return bool(row[0]) if row else False
     finally:
         conn.close()
 

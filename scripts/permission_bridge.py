@@ -235,6 +235,35 @@ def main():
             if g.get("role") == "coowner":
                 approver_ids.add(g["open_id"])
 
+    # Autoapprove: skip the permission card, send lightweight notification, auto-allow
+    if session and session.get("autoapprove"):
+        _log(f"autoapprove: auto-allowing {tool_name}")
+        # Send lightweight notification card
+        try:
+            desc = format_tool_description(tool_name, tool_input)
+            # Truncate for card brevity
+            if desc and len(desc) > 120:
+                desc = desc[:117] + "..."
+            body = f"`{tool_name}`"
+            if desc:
+                body += f"\n{desc}"
+            card = lark_im.build_card(
+                "Auto-approved",
+                body=body,
+                color="grey",
+            )
+            lark_im.send_message(token, chat_id, card)
+        except Exception as e:
+            _log(f"autoapprove notification failed (non-critical): {e}")
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "allow"},
+            },
+        }
+        json.dump(output, sys.stdout)
+        sys.exit(0)
+
     # Generate nonce, ack stale replies, send card — all in one step.
     try:
         nonce = prepare_permission_request(

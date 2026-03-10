@@ -516,6 +516,21 @@ def cmd_set_filter(args):
     return 0
 
 
+def cmd_set_autoapprove(args):
+    sid = _get_session_id()
+    if not sid:
+        _jprint({"ok": False, "error": "no active session"})
+        return 1
+    session = handoff_db.get_session(sid)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
+    enabled = args.enabled.lower() in ("on", "true", "1", "yes")
+    handoff_db.set_autoapprove(session["chat_id"], enabled)
+    _jprint({"ok": True, "autoapprove": enabled})
+    return 0
+
+
 def cmd_parent_local(args):
     local = handoff_db.lookup_parent_message(args.parent_id)
     if not local:
@@ -1603,6 +1618,10 @@ def build_parser():
     s = sub.add_parser("set-filter")
     s.add_argument("level", choices=["verbose", "important", "concise"])
     s.set_defaults(func=cmd_set_filter)
+
+    s = sub.add_parser("set-autoapprove")
+    s.add_argument("enabled", choices=["on", "off"])
+    s.set_defaults(func=cmd_set_autoapprove)
 
     s = sub.add_parser("parent-local")
     s.add_argument("--parent-id", required=True)

@@ -247,5 +247,43 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertEqual(stale_ids_new, ["11"])
 
 
+    def test_autoapprove_default_off(self):
+        handoff_db.register_session("s1", "chat-aa", "opus")
+        session = handoff_db.get_session("s1")
+        self.assertFalse(session["autoapprove"])
+
+    def test_autoapprove_set_on_off(self):
+        handoff_db.register_session("s1", "chat-aa2", "opus")
+        handoff_db.set_autoapprove("chat-aa2", True)
+        self.assertTrue(handoff_db.get_autoapprove("chat-aa2"))
+        session = handoff_db.get_session("s1")
+        self.assertTrue(session["autoapprove"])
+
+        handoff_db.set_autoapprove("chat-aa2", False)
+        self.assertFalse(handoff_db.get_autoapprove("chat-aa2"))
+        session = handoff_db.get_session("s1")
+        self.assertFalse(session["autoapprove"])
+
+    def test_set_autoapprove_command(self):
+        handoff_db.register_session("s1", "chat-aa3", "opus")
+        os.environ["HANDOFF_SESSION_ID"] = "s1"
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            handoff_ops.cmd_set_autoapprove(_Args(enabled="on"))
+        result = json.loads(buf.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["autoapprove"])
+        self.assertTrue(handoff_db.get_autoapprove("chat-aa3"))
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            handoff_ops.cmd_set_autoapprove(_Args(enabled="off"))
+        result = json.loads(buf.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["autoapprove"])
+        self.assertFalse(handoff_db.get_autoapprove("chat-aa3"))
+
+
 if __name__ == "__main__":
     unittest.main()

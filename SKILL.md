@@ -353,6 +353,14 @@ Filter levels control PostToolUse forwarding to Lark:
 - **important** — forward Edit + Write only (skip Bash unless error)
 - **concise** — no PostToolUse forwarding (default)
 
+**Autoapprove command**: If any reply text matches `autoapprove on`, `autoapprove off`, `auto approve on/off`, or similar (case-insensitive), toggle autoapprove mode:
+
+```bash
+python3 $SKILL_SCRIPTS/handoff_ops.py set-autoapprove <on|off>
+```
+
+Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
+
 **Guest & coowner commands**: The owner can manage a whitelist of members who can interact with the bot. This works in both regular and sidecar mode. Detect these commands flexibly (natural language, any language):
 
 - **Add guests**: Owner mentions users with intent to grant guest access. Examples: "add @jack @alice as guest", "@jack 和 @alice 可以和你对话", "let @bob talk to you". Extract `open_id` and `name` from the `mentions` array in the message, then:
