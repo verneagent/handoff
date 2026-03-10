@@ -41,6 +41,18 @@ SKIP_COMMANDS = (
     "iterm2_silence.py",
     "preflight.py",
     "lark_im.py",
+    "enter_handoff.py",
+    "install_hooks.py",
+    "run_tests.py",
+    "handoff_config.py",
+    # Path fragments — catch any command referencing handoff internals
+    "skills/handoff/scripts/",
+    "skills/handoff/worker/",
+    # Env var prefixes used by handoff infrastructure calls
+    "HANDOFF_PROJECT_DIR=",
+    "HANDOFF_SESSION_ID=",
+    "SKILL_SCRIPTS=",
+    "$SKILL_SCRIPTS",
 )
 
 
