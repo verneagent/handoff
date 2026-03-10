@@ -763,6 +763,25 @@ def _find_tab_by_name(tabs, name):
     return None
 
 
+def _known_session_tab_names(chat_id):
+    """Return set of tab names that belong to handoff sessions (tool + model names)."""
+    names = set()
+    try:
+        conn = handoff_db._get_db()
+        rows = conn.execute(
+            "SELECT session_tool, session_model FROM sessions WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchall()
+        for row in rows:
+            if row[0]:
+                names.add(row[0])
+            if row[1]:
+                names.add(row[1])
+    except Exception:
+        pass
+    return names
+
+
 def cmd_tabs_start(args):
     creds = _require_credentials()
     token = _require_token(creds)
@@ -773,12 +792,15 @@ def cmd_tabs_start(args):
     tab_url = str(args.tab_url or "https://example.com").strip()
     tabs = lark_im.list_chat_tabs(token, chat_id)
 
-    # Clean up stale URL tabs from previous sessions
+    # Clean up stale URL tabs from previous sessions — only remove tabs
+    # whose names match known session tool/model names (not user-created tabs)
+    known_session_names = _known_session_tab_names(chat_id)
     keep_names = {tool, model}
     stale_ids = [
         tab["tab_id"]
         for tab in tabs
         if tab.get("tab_type") == "url"
+        and tab.get("tab_name") in known_session_names
         and tab.get("tab_name") not in keep_names
         and tab.get("tab_id")
     ]
@@ -887,6 +909,57 @@ def cmd_tabs_end(args):
             "chat_tabs": tabs,
         }
     )
+    return 0
+
+
+def cmd_tabs_add(args):
+    """Add a custom URL tab to the chat group."""
+    creds = _require_credentials()
+    token = _require_token(creds)
+    chat_id = _require_active_chat_id()
+
+    tab_name = args.tab_name.strip()
+    tab_url = args.tab_url.strip()
+    if not tab_name or not tab_url:
+        raise RuntimeError("--tab-name and --tab-url are required")
+
+    tabs = lark_im.create_chat_tabs(token, chat_id, [
+        {"tab_name": tab_name, "tab_type": "url", "tab_content": {"url": tab_url}}
+    ])
+    _jprint({"ok": True, "chat_id": chat_id, "chat_tabs": tabs})
+    return 0
+
+
+def cmd_tabs_remove(args):
+    """Remove a tab by name from the chat group."""
+    creds = _require_credentials()
+    token = _require_token(creds)
+    chat_id = _require_active_chat_id()
+
+    tab_name = args.tab_name.strip()
+    tabs = lark_im.list_chat_tabs(token, chat_id)
+    remove_ids = [
+        tab["tab_id"]
+        for tab in tabs
+        if tab.get("tab_name") == tab_name and tab.get("tab_id")
+    ]
+    if not remove_ids:
+        _jprint({"ok": False, "error": f"No tab named '{tab_name}' found"})
+        return 1
+
+    tabs = lark_im.delete_chat_tabs(token, chat_id, remove_ids)
+    _jprint({"ok": True, "chat_id": chat_id, "removed": remove_ids, "chat_tabs": tabs})
+    return 0
+
+
+def cmd_tabs_list(args):
+    """List all tabs in the chat group."""
+    creds = _require_credentials()
+    token = _require_token(creds)
+    chat_id = _require_active_chat_id()
+
+    tabs = lark_im.list_chat_tabs(token, chat_id)
+    _jprint({"ok": True, "chat_id": chat_id, "chat_tabs": tabs})
     return 0
 
 
@@ -1641,6 +1714,18 @@ def build_parser():
 
     s.add_argument("--session-model", required=True)
     s.set_defaults(func=cmd_tabs_end)
+
+    s = sub.add_parser("tabs-add")
+    s.add_argument("--tab-name", required=True)
+    s.add_argument("--tab-url", required=True)
+    s.set_defaults(func=cmd_tabs_add)
+
+    s = sub.add_parser("tabs-remove")
+    s.add_argument("--tab-name", required=True)
+    s.set_defaults(func=cmd_tabs_remove)
+
+    s = sub.add_parser("tabs-list")
+    s.set_defaults(func=cmd_tabs_list)
 
     s = sub.add_parser("send-status-card")
     s.add_argument("card_type", choices=["start", "end"])
