@@ -10,6 +10,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPT_DIR)
 
+import handoff_config
 import handoff_db
 
 
@@ -24,6 +25,8 @@ class HandoffSimulationTest(unittest.TestCase):
         os.makedirs(self.project_dir, exist_ok=True)
 
         os.environ["HOME"] = self.tmp.name
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
         os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
         os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
 
@@ -48,6 +51,7 @@ class HandoffSimulationTest(unittest.TestCase):
         else:
             os.environ["HANDOFF_SESSION_TOOL"] = self._old_tool
 
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
         self.tmp.cleanup()
 
     def test_chat_claim_race(self):

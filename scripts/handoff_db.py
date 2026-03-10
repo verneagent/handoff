@@ -10,7 +10,8 @@ import os
 import sqlite3
 import time
 
-from handoff_config import HANDOFF_HOME, _require_project_dir
+import handoff_config
+from handoff_config import _require_project_dir
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ def _db_path():
     project_dir = _require_project_dir()
     project_name = project_dir.replace("/", "-")
     return os.path.join(
-        os.path.join(HANDOFF_HOME, "projects"),
+        os.path.join(handoff_config.HANDOFF_HOME, "projects"),
         project_name,
         "handoff-data.db",
     )

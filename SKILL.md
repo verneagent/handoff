@@ -105,6 +105,7 @@ The plugin handles `session.idle` during active handoff and sends continuation p
 This skill supports sub-commands via arguments:
 
 - **`/handoff`** (no args) — Run preflight; if it fails, offer to run the setup wizard inline. If it passes, enter Handoff mode.
+- **`/handoff <group name>`** — Run preflight, then look up the group by name across all bot chats. If the group is **external** (no `workspace:` tag), enter **sidecar mode** automatically. If it's a regular workspace-tagged group, enter **regular mode**. Pass `--group-name '<GROUP_NAME>'` to `enter_handoff.py`. The response includes `sidecar_mode: true/false` — if true, follow the sidecar loop path (Step 4 of Sidecar Mode); if false, follow the regular path (Step E).
 - **`/handoff help`** — Print all supported sub-commands with descriptions. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff init`** — Run the full interactive setup wizard for ALL steps, even if values already exist. For each step, offer "Keep existing" (if a value exists), "Provide a new value", or "Create new" (where applicable). **CLI only** — cannot run during handoff mode.
 - **`/handoff check`** — Run preflight checks and print a status report of what's configured and what's missing. Do NOT enter Handoff mode. Safe to run anytime.
@@ -158,6 +159,7 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | Command | Description |
 |---------|-------------|
 | `/handoff` | Enter handoff mode (with preflight and guided setup) |
+| `/handoff <group name>` | Join a specific group (auto-detects sidecar vs regular) |
 | `/handoff help` | Show this help |
 | `/handoff init` | Full interactive setup wizard (CLI only) |
 | `/handoff check` | Run preflight checks and print status report |
@@ -252,6 +254,8 @@ python3 $SKILL_SCRIPTS/enter_handoff.py --session-model '${session_model}'
 ```
 
 Pass `--mode no-ask` or `--mode new` when the user explicitly requests those modes.
+
+Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name (e.g. `/handoff MyGroup`). This looks up the group across all bot chats and auto-detects whether it's external (sidecar) or workspace-tagged (regular). When `sidecar_mode` is true in the response, follow the sidecar loop path (use `start_and_wait.py` as in Sidecar Mode Step 4).
 
 **Status values:**
 

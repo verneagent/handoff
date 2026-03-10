@@ -41,6 +41,8 @@ class ResolveSessionContextTest(unittest.TestCase):
         os.makedirs(self.project_dir, exist_ok=True)
 
         os.environ["HOME"] = self.tmp.name
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
         os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
         os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
 
@@ -60,6 +62,7 @@ class ResolveSessionContextTest(unittest.TestCase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = val
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
         self.tmp.cleanup()
 
     def test_no_session_id_raises(self):

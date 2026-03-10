@@ -120,6 +120,51 @@ def find_external_groups(token, open_id=None):
     return groups
 
 
+def find_group_by_name(token, name, open_id=None):
+    """Find a bot group by name and return it with an ``external`` flag.
+
+    Searches all groups the bot is a member of for a case-insensitive name
+    match.  Returns ``{chat_id, name, description, external}`` where
+    ``external`` is True when the group has no ``workspace:`` tag (i.e. not
+    created by handoff).  Returns ``None`` if no match is found.
+
+    If *open_id* is provided, only matches groups where that user is a member.
+    """
+    try:
+        chats = lark_im.list_bot_chats(token)
+        for chat in chats:
+            cid = chat.get("chat_id", "")
+            if not cid:
+                continue
+            try:
+                info = lark_im.get_chat_info(token, cid)
+                chat_name = info.get("name", "")
+                if chat_name.lower() != name.lower():
+                    continue
+                desc = info.get("description") or ""
+                if open_id:
+                    try:
+                        members = lark_im.list_chat_members(token, cid)
+                        member_ids = {m.get("member_id") for m in members}
+                        if open_id not in member_ids:
+                            continue
+                    except Exception as e:
+                        warn(f"failed to check members of chat {cid}: {e}")
+                        continue
+                return {
+                    "chat_id": cid,
+                    "name": chat_name,
+                    "description": desc,
+                    "external": "workspace:" not in desc,
+                }
+            except Exception as e:
+                warn(f"failed to inspect chat {cid}: {e}")
+                continue
+    except Exception as e:
+        warn(f"failed to list bot chats: {e}")
+    return None
+
+
 def compute_next_group_name(worktree, machine, existing_names):
     """Compute the next numbered group name.
 

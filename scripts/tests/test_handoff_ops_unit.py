@@ -28,6 +28,7 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self._old_project = os.environ.get("HANDOFF_PROJECT_DIR")
         self._old_session = os.environ.get("HANDOFF_SESSION_ID")
         self._old_tool = os.environ.get("HANDOFF_SESSION_TOOL")
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
 
         self.tmp = tempfile.TemporaryDirectory()
         self.project_dir = os.path.join(self.tmp.name, "project")
@@ -37,6 +38,7 @@ class HandoffOpsUnitTest(unittest.TestCase):
         os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
         os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
         os.environ.pop("HANDOFF_SESSION_ID", None)
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
 
         self.db_path = handoff_db._db_path()
         handoff_db._db_initialized.discard(self.db_path)
@@ -64,6 +66,7 @@ class HandoffOpsUnitTest(unittest.TestCase):
         else:
             os.environ["HANDOFF_SESSION_TOOL"] = self._old_tool
 
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
         self.tmp.cleanup()
 
     def test_config_current_returns_boolean_field(self):

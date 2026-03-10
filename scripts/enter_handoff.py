@@ -33,6 +33,7 @@ import handoff_db
 import lark_im
 from send_to_group import (
     create_handoff_group,
+    find_group_by_name,
     find_groups_for_workspace,
     get_worktree_name,
 )
@@ -146,6 +147,11 @@ def main():
         default="default",
         help="Group selection mode",
     )
+    p.add_argument(
+        "--group-name",
+        default=None,
+        help="Join a specific group by name (auto-detects sidecar vs regular)",
+    )
     args = p.parse_args()
 
     # Check if hooks were just installed but not yet loaded (requires restart)
@@ -176,7 +182,7 @@ def main():
         })
         return 0
 
-    # ── Step B: discover ──────────────────────────────────────────────────
+    # ── Credentials (shared by all paths) ────────────────────────────────
     creds = handoff_config.load_credentials()
     if not creds:
         _jprint({"error": "no_credentials"})
@@ -184,6 +190,46 @@ def main():
     token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
     email = creds.get("email", "")
     open_id = lark_im.lookup_open_id_by_email(token, email) if email else ""
+
+    # ── Group-name shortcut ───────────────────────────────────────────────
+    # When --group-name is given, look up the group across ALL bot chats
+    # and auto-detect sidecar (external) vs regular (workspace-tagged).
+    if args.group_name:
+        match = find_group_by_name(token, args.group_name, open_id or None)
+        if not match:
+            _jprint({"error": "group_not_found", "group_name": args.group_name})
+            return 1
+        sidecar = match["external"]
+        chat_id_to_activate = match["chat_id"]
+
+        model = str(args.session_model).strip()
+        if "/" in model:
+            model = model.split("/", 1)[1]
+        bot_open_id = ""
+        try:
+            bot_info = lark_im.get_bot_info(token)
+            bot_open_id = bot_info.get("open_id", "")
+        except Exception:
+            pass
+
+        handoff_db.activate_handoff(
+            session_id,
+            chat_id_to_activate,
+            session_model=model,
+            operator_open_id=open_id,
+            bot_open_id=bot_open_id,
+            sidecar_mode=sidecar,
+        )
+        _jprint({
+            "status": "ready",
+            "chat_id": chat_id_to_activate,
+            "session_id": session_id,
+            "project_dir": project_dir,
+            "sidecar_mode": sidecar,
+        })
+        return 0
+
+    # ── Step B: discover ──────────────────────────────────────────────────
     workspace_id = handoff_config.get_workspace_id()
     groups = find_groups_for_workspace(token, workspace_id, open_id or None)
     handoff_db.prune_stale_sessions()

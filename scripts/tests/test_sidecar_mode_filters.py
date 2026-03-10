@@ -17,6 +17,7 @@ import unittest
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPT_DIR)
 
+import handoff_config
 import handoff_db
 import wait_for_reply
 
@@ -32,6 +33,7 @@ class _DbTestCase(unittest.TestCase):
         self._old_home = os.environ.get("HOME")
         self._old_project = os.environ.get("HANDOFF_PROJECT_DIR")
         self._old_tool = os.environ.get("HANDOFF_SESSION_TOOL")
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
 
         self.tmp = tempfile.TemporaryDirectory()
         self.project_dir = os.path.join(self.tmp.name, "project")
@@ -40,6 +42,7 @@ class _DbTestCase(unittest.TestCase):
         os.environ["HOME"] = self.tmp.name
         os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
         os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
 
         self.db_path = handoff_db._db_path()
         handoff_db._db_initialized.discard(self.db_path)
@@ -56,6 +59,7 @@ class _DbTestCase(unittest.TestCase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = val
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
         self.tmp.cleanup()
 
 
