@@ -285,5 +285,40 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertFalse(handoff_db.get_autoapprove("chat-aa3"))
 
 
+    def test_autoapprove_message_set_get_clear(self):
+        """Verify autoapprove card message_id storage works (same table as working_state)."""
+        handoff_db.register_session("s1", "chat-aam", "opus")
+
+        # Initially no message
+        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
+
+        # Set and get
+        handoff_db.set_autoapprove_message("s1", "msg-aa-1")
+        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-1")
+
+        # Update (upsert)
+        handoff_db.set_autoapprove_message("s1", "msg-aa-2")
+        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-2")
+
+        # Clear
+        handoff_db.clear_autoapprove_message("s1")
+        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
+
+    def test_autoapprove_message_independent_of_working(self):
+        """Autoapprove and working card message_ids don't interfere."""
+        handoff_db.register_session("s1", "chat-ind", "opus")
+
+        handoff_db.set_working_message("s1", "msg-working")
+        handoff_db.set_autoapprove_message("s1", "msg-aa")
+
+        self.assertEqual(handoff_db.get_working_message("s1"), "msg-working")
+        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
+
+        # Clearing one doesn't affect the other
+        handoff_db.clear_working_message("s1")
+        self.assertIsNone(handoff_db.get_working_message("s1"))
+        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -493,6 +493,7 @@ def cmd_deactivate(args):
         _jprint({"ok": True, "deactivated": False})
         return 0
     handoff_db.clear_working_message(sid)
+    handoff_db.clear_autoapprove_message(sid)
     chat_id = handoff_db.deactivate_handoff(sid)
     _jprint({"ok": True, "deactivated": True, "chat_id": chat_id or ""})
     return 0

@@ -139,6 +139,54 @@ def _poll_worker(worker_url, chat_id, since, key=None):
         return handoff_worker.poll_worker(worker_url, chat_id, since, key=key)
 
 
+def _tool_summary(tool_name, tool_input):
+    """Build a short one-line summary for a tool invocation."""
+    if tool_name == "Bash":
+        desc = tool_input.get("description", "")
+        cmd = tool_input.get("command", "")
+        if desc:
+            return f"`Bash`: {desc}"
+        if cmd:
+            display = cmd if len(cmd) <= 80 else cmd[:77] + "..."
+            return f"`Bash`: `{display}`"
+        return "`Bash`"
+    if tool_name in ("Edit", "Write", "Read"):
+        path = tool_input.get("file_path", "")
+        name = os.path.basename(path) if path else "file"
+        return f"`{tool_name}: {name}`"
+    return f"`{tool_name}`"
+
+
+def _send_or_update_autoapprove(session_id, token, chat_id, tool_name, tool_input):
+    """Send or update the merged 'Auto-approved' card, same pattern as Working hard."""
+    import fcntl
+
+    summary = _tool_summary(tool_name, tool_input)
+    card = lark_im.build_card("Auto-approved", body=summary, color="grey")
+
+    lock_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, f"autoapprove-{session_id}.lock")
+
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            existing_msg_id = handoff_db.get_autoapprove_message(session_id)
+            if existing_msg_id:
+                try:
+                    lark_im.update_card_message(token, existing_msg_id, card)
+                    return
+                except Exception as e:
+                    _log(f"failed to update autoapprove card: {e}")
+            try:
+                msg_id = lark_im.send_message(token, chat_id, card)
+                handoff_db.set_autoapprove_message(session_id, msg_id)
+            except Exception as e:
+                _log(f"failed to send autoapprove card: {e}")
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 def deny_and_exit(tool_name, reason=""):
     """Return an explicit deny decision to Claude Code."""
     msg = f"Permission to use {tool_name} was denied via Lark."
@@ -235,26 +283,11 @@ def main():
             if g.get("role") == "coowner":
                 approver_ids.add(g["open_id"])
 
-    # Autoapprove: skip the permission card, send lightweight notification, auto-allow
+    # Autoapprove: skip the permission card, send/update lightweight notification, auto-allow
     if session and session.get("autoapprove"):
         _log(f"autoapprove: auto-allowing {tool_name}")
-        # Send lightweight notification card
-        try:
-            desc = format_tool_description(tool_name, tool_input)
-            # Truncate for card brevity
-            if desc and len(desc) > 120:
-                desc = desc[:117] + "..."
-            body = f"`{tool_name}`"
-            if desc:
-                body += f"\n{desc}"
-            card = lark_im.build_card(
-                "Auto-approved",
-                body=body,
-                color="grey",
-            )
-            lark_im.send_message(token, chat_id, card)
-        except Exception as e:
-            _log(f"autoapprove notification failed (non-critical): {e}")
+        # Send or update the merged autoapprove notification card
+        _send_or_update_autoapprove(session_id, token, chat_id, tool_name, tool_input)
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PermissionRequest",

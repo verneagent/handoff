@@ -229,6 +229,7 @@ def _reset_working_state():
     if not session_id:
         return
     handoff_db.clear_working_message(session_id)
+    handoff_db.clear_autoapprove_message(session_id)
 
 
 def send(token, chat_id, title, message, is_card, color, buttons=None,

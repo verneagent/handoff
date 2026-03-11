@@ -588,6 +588,54 @@ def clear_working_message(session_id):
         conn.close()
 
 
+# --- Autoapprove card merging (reuses working_state table with "aa:" prefix) ---
+
+
+def set_autoapprove_message(session_id, message_id):
+    """Store the autoapprove card message_id for a session."""
+    key = f"aa:{session_id}"
+    conn = _get_db()
+    try:
+        conn.execute(
+            "INSERT INTO working_state (session_id, message_id, created_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(session_id) DO UPDATE"
+            " SET message_id = ?, created_at = ?",
+            (key, message_id, int(time.time()), message_id, int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_autoapprove_message(session_id):
+    """Return the autoapprove card message_id for a session, or None."""
+    key = f"aa:{session_id}"
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT message_id FROM working_state WHERE session_id = ?",
+            (key,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def clear_autoapprove_message(session_id):
+    """Remove the autoapprove card state for a session."""
+    key = f"aa:{session_id}"
+    conn = _get_db()
+    try:
+        conn.execute(
+            "DELETE FROM working_state WHERE session_id = ?",
+            (key,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_active_sessions():
     """Return all active sessions as a list of dicts."""
     conn = _get_db()
