@@ -133,6 +133,33 @@ def main():
                     existing_list.append(new_entry)
                     added.append(event_type)
 
+    # 7b. Ensure permission pattern for handoff scripts.
+    #     Single wildcard pattern covers all scripts in the directory.
+    if "permissions" not in settings:
+        settings["permissions"] = {}
+    if "allow" not in settings["permissions"]:
+        settings["permissions"]["allow"] = []
+
+    allow_list = settings["permissions"]["allow"]
+    perm_pattern = f'Bash(python3 "{script_dir}/"*)'
+    perms_added = []
+    perms_skipped = []
+
+    if perm_pattern in allow_list:
+        # Wildcard pattern already present
+        perms_skipped.append(perm_pattern)
+    else:
+        # Remove any old per-script patterns from previous installs
+        old_patterns = [
+            p for p in allow_list
+            if p.startswith("Bash(") and "handoff" in p and "scripts/" in p
+        ]
+        for old in old_patterns:
+            allow_list.remove(old)
+            perms_skipped.append(f"removed: {old}")
+        allow_list.append(perm_pattern)
+        perms_added.append(perm_pattern)
+
     # 8. Write
     if not args.dry_run:
         # Ensure parent directory exists
@@ -172,6 +199,8 @@ def main():
         "target": target,
         "added": added,
         "skipped": skipped,
+        "perms_added": perms_added,
+        "perms_skipped": perms_skipped,
     }
     if stale_warning:
         result["stale_project_dir"] = stale_warning

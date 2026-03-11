@@ -145,6 +145,8 @@ This automatically:
 - Detects install scope (project vs global) by checking if `.claude/skills/handoff/hooks.json` exists in the project
 - Resolves hook commands for the detected scope
 - Merges hooks into the correct `settings.json` (project or `~/.claude/settings.json`)
+- Adds a wildcard permission pattern `Bash(python3 "<scripts_dir>/"*)` so all handoff scripts run without manual approval
+- Replaces any old per-script patterns from previous installs
 - Skips duplicates (idempotent)
 
 Review the JSON output to confirm scope and which hooks were added. Remember the target file path for the summary table.
