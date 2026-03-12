@@ -109,7 +109,40 @@ Then use **AskUserQuestion** to collect `app_id` and `app_secret`. Remember the 
 
 Use **AskUserQuestion** to collect the user's **Lark login email**. Emphasize: this is the **personal email** used to sign in to Lark (e.g. `name@gmail.com`, `name@outlook.com`), **NOT the corporate/enterprise email** (e.g. `name@company.com`). Corporate emails will not work with the lookup API.
 
-Remember the email — do NOT save yet. The `open_id` will be resolved on demand when creating a chat group.
+Remember the email — do NOT save yet.
+
+**Validate the email immediately** — attempt to resolve the `open_id` now so errors are caught during setup, not later:
+
+```bash
+python3 -c "
+import sys, os
+for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills/handoff/scripts')]:
+    if os.path.exists(p):
+        sys.path.insert(0, p)
+        break
+import lark_im, json
+token = lark_im.get_tenant_token('<APP_ID>', '<APP_SECRET>')
+oid = lark_im.lookup_open_id_by_email(token, '<EMAIL>')
+print(json.dumps({'open_id': oid}))
+"
+```
+
+Use the `app_id` and `app_secret` collected in Step 2.
+
+- If `open_id` is non-null: validation passed. Continue.
+- If `open_id` is null: the email cannot be resolved. Tell the user:
+
+  > **The email `<EMAIL>` can't be resolved to a Lark user.**
+  >
+  > This usually means the Lark app is not visible to this user. To fix it:
+  > 1. Go to the **Lark Admin Console** (not the Developer Console) — [admin.larksuite.com](https://admin.larksuite.com) or [admin.feishu.cn](https://admin.feishu.cn)
+  > 2. Navigate to **Workplace** → **App Management** → find your app
+  > 3. Set **App Availability** (可用范围) to include the user or set it to "All employees"
+  > 4. If the user is an **external** member (e.g. personal email, not part of the organization), the org admin must enable **"Allow external users"** in the app's availability settings
+  >
+  > After updating availability, wait a moment and try again.
+
+  Use **AskUserQuestion** with options: "Retry" (re-run the validation) and "Skip" (proceed without validation — the user will fix it later).
 
 Warn: "All Claude handoff messages from this machine will be sent to this email's Lark account."
 
