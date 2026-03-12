@@ -57,6 +57,8 @@ def _require_active_chat_id():
     session = handoff_db.get_session(sid)
     if not session:
         raise RuntimeError("no_active_handoff")
+    # Set profile from session so subsequent config loads use the right profile
+    handoff_config.set_active_profile(session.get("config_profile", "default"))
     chat_id = session.get("chat_id", "")
     if not chat_id:
         raise RuntimeError("missing_chat_id")
@@ -394,11 +396,13 @@ def cmd_activate(args):
     except Exception as exc:
         _warn(f"failed to resolve operator/bot open_id: {exc}")
     sidecar_mode = getattr(args, "sidecar_mode", False)
+    profile = handoff_config._resolve_profile()
     handoff_db.activate_handoff(
         sid, args.chat_id, session_model=model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=sidecar_mode,
+        config_profile=profile,
     )
     # Best-effort: update MEMORY.md with handoff-specific instructions
     # so they survive auto-compaction
@@ -444,6 +448,7 @@ def cmd_takeover(args):
             bot_open_id = bot_info.get("open_id", "")
     except Exception as exc:
         _warn(f"failed to resolve operator/bot open_id: {exc}")
+    profile = handoff_config._resolve_profile()
     expected_owner = handoff_db.get_chat_owner_session(args.chat_id)
     ok, owner, replaced_owner = handoff_db.takeover_chat(
         sid,
@@ -452,6 +457,7 @@ def cmd_takeover(args):
         expected_owner_session_id=expected_owner,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
+        config_profile=profile,
     )
 
     if not ok:
@@ -495,6 +501,18 @@ def cmd_deactivate(args):
     handoff_db.clear_working_message(sid)
     handoff_db.clear_autoapprove_message(sid)
     chat_id = handoff_db.deactivate_handoff(sid)
+    # Clean HANDOFF_PROFILE from CLAUDE_ENV_FILE so subsequent /handoff
+    # in the same session doesn't inherit a stale profile
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    if env_file and os.path.exists(env_file):
+        try:
+            with open(env_file) as f:
+                lines = [l for l in f.readlines()
+                         if not l.startswith("export HANDOFF_PROFILE=")]
+            with open(env_file, "w") as f:
+                f.writelines(lines)
+        except Exception:
+            pass
     _jprint({"ok": True, "deactivated": True, "chat_id": chat_id or ""})
     return 0
 
@@ -755,8 +773,13 @@ def cmd_status(args):
 
 
 def cmd_config_current(args):
-    cfg = handoff_config.CONFIG_FILE
-    _jprint({"config_file": cfg, "config_exists": os.path.exists(cfg)})
+    profile = handoff_config._resolve_profile()
+    cfg = handoff_config.resolve_config_file()
+    _jprint({
+        "config_file": cfg,
+        "config_exists": os.path.exists(cfg),
+        "profile": profile,
+    })
     return 0
 
 
@@ -1125,7 +1148,8 @@ def cmd_clear_project(args):
 
 
 def cmd_deinit_config(args):
-    cfg = handoff_config.CONFIG_FILE
+    profile = handoff_config._resolve_profile()
+    cfg = handoff_config.resolve_config_file()
     removed = []
     missing = []
 
@@ -1141,6 +1165,7 @@ def cmd_deinit_config(args):
             "removed": removed,
             "missing": missing,
             "active_config": cfg,
+            "profile": profile,
         }
     )
     return 0
@@ -1573,6 +1598,47 @@ def cmd_guest_list(args):
     })
 
 
+def cmd_profile_list(args):
+    """List all available config profiles."""
+    profiles = handoff_config.list_profiles()
+    default = handoff_config.get_default_profile()
+    _jprint({
+        "ok": True,
+        "profiles": profiles,
+        "default": default,
+    })
+    return 0
+
+
+def cmd_profile_show(args):
+    """Show the active profile's config (redacted)."""
+    profile = handoff_config._resolve_profile()
+    cfg_path = handoff_config.resolve_config_file()
+    raw = handoff_config._load_config()
+    im_cfg = handoff_config._resolve_im_config(raw) or {}
+    _jprint({
+        "ok": True,
+        "profile": profile,
+        "config_file": cfg_path,
+        "config_exists": os.path.exists(cfg_path),
+        "worker_url": (raw or {}).get("worker_url", ""),
+        "app_id": im_cfg.get("app_id", ""),
+        "email": im_cfg.get("email", ""),
+    })
+    return 0
+
+
+def cmd_profile_set_default(args):
+    """Set the default config profile."""
+    name = args.name
+    handoff_config.set_default_profile(name)
+    _jprint({
+        "ok": True,
+        "default": name,
+    })
+    return 0
+
+
 def _chat_id_type(value):
     """Argparse type that validates chat_id format."""
     if not handoff_config.is_valid_chat_id(value):
@@ -1585,6 +1651,7 @@ def _chat_id_type(value):
 
 def build_parser():
     p = argparse.ArgumentParser(description="Deterministic handoff operations")
+    p.add_argument("--profile", default=None, help="Config profile name")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("session-check")
@@ -1778,12 +1845,39 @@ def build_parser():
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
 
+    s = sub.add_parser("profile-list")
+    s.set_defaults(func=cmd_profile_list)
+
+    s = sub.add_parser("profile-show")
+    s.set_defaults(func=cmd_profile_show)
+
+    s = sub.add_parser("profile-set-default")
+    s.add_argument("name", help="Profile name to set as default")
+    s.set_defaults(func=cmd_profile_set_default)
+
     return p
 
 
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    # Set active profile from --profile flag or HANDOFF_PROFILE env
+    profile = getattr(args, "profile", None)
+    if profile:
+        handoff_config.set_active_profile(profile)
+    else:
+        # Defense-in-depth: set profile from active session so commands that
+        # call _require_credentials() before _require_active_chat_id() still
+        # use the correct profile even if HANDOFF_PROFILE env var is missing.
+        sid = os.environ.get("HANDOFF_SESSION_ID", "").strip()
+        if sid:
+            try:
+                session = handoff_db.get_session(sid)
+                if session:
+                    handoff_config.set_active_profile(
+                        session.get("config_profile", "default"))
+            except Exception:
+                pass
     try:
         return int(args.func(args) or 0)
     except Exception as e:

@@ -35,6 +35,88 @@ def default_config_file():
 CONFIG_FILE = default_config_file()
 
 
+# ---------------------------------------------------------------------------
+# Multi-profile support
+# ---------------------------------------------------------------------------
+
+_active_profile = None
+
+
+def set_active_profile(profile):
+    """Set the process-wide active profile.
+
+    Called once at process start (entry points, hooks) so all subsequent
+    config loads use the correct profile without explicit parameters.
+    """
+    global _active_profile
+    _active_profile = profile
+
+
+def _resolve_profile(profile=None):
+    """Resolve the active profile name.
+
+    Resolution order:
+    1. Explicit profile parameter
+    2. Module-level _active_profile (set by set_active_profile())
+    3. HANDOFF_PROFILE env var
+    4. get_default_profile()
+    """
+    if profile:
+        return profile
+    if _active_profile:
+        return _active_profile
+    env_profile = os.environ.get("HANDOFF_PROFILE", "").strip()
+    if env_profile:
+        return env_profile
+    return get_default_profile()
+
+
+def get_default_profile():
+    """Read the default profile name. Returns "default" if not configured."""
+    path = os.path.join(HANDOFF_HOME, "default_profile")
+    try:
+        with open(path) as f:
+            name = f.read().strip()
+            return name if name else "default"
+    except FileNotFoundError:
+        return "default"
+
+
+def set_default_profile(name):
+    """Set the default profile name."""
+    path = os.path.join(HANDOFF_HOME, "default_profile")
+    os.makedirs(HANDOFF_HOME, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(name)
+
+
+def resolve_config_file(profile=None):
+    """Resolve profile name to config file path.
+
+    "default" -> ~/.handoff/config.json (backward compatible)
+    other -> ~/.handoff/profiles/<name>.json
+    """
+    name = _resolve_profile(profile)
+    if name == "default":
+        return os.path.join(HANDOFF_HOME, "config.json")
+    return os.path.join(HANDOFF_HOME, "profiles", f"{name}.json")
+
+
+def list_profiles():
+    """List all available profile names."""
+    profiles = []
+    if os.path.exists(os.path.join(HANDOFF_HOME, "config.json")):
+        profiles.append("default")
+    profiles_dir = os.path.join(HANDOFF_HOME, "profiles")
+    if os.path.isdir(profiles_dir):
+        for fname in sorted(os.listdir(profiles_dir)):
+            if fname.endswith(".json"):
+                name = fname[:-5]
+                if name not in profiles:
+                    profiles.append(name)
+    return profiles
+
+
 def _require_project_dir():
     """Return HANDOFF_PROJECT_DIR (or CLAUDE_PROJECT_DIR fallback) or raise.
 
@@ -152,10 +234,13 @@ def default_poll_timeout(session):
 # ---------------------------------------------------------------------------
 
 
-def _load_config():
-    """Read raw JSON from CONFIG_FILE. Returns dict or None on error."""
+def _load_config(profile=None):
+    """Read raw JSON from the config file for the given profile.
+
+    Returns dict or None on error.
+    """
     try:
-        with open(CONFIG_FILE) as f:
+        with open(resolve_config_file(profile)) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
@@ -183,35 +268,35 @@ def _resolve_im_config(raw):
     return im_cfg
 
 
-def load_credentials():
+def load_credentials(profile=None):
     """Load app_id, app_secret, email from config file.
 
     Returns the config dict, or None if the file doesn't exist or
     required fields (app_id, app_secret) are missing.
     """
-    return _resolve_im_config(_load_config())
+    return _resolve_im_config(_load_config(profile))
 
 
-def load_worker_url():
+def load_worker_url(profile=None):
     """Load the Cloudflare Worker URL from config. Returns None if missing."""
-    raw = _load_config()
+    raw = _load_config(profile)
     if raw is None:
         return None
     url = raw.get("worker_url", "").strip()
     return url or None
 
 
-def load_api_key():
+def load_api_key(profile=None):
     """Load the Worker API key from config. Returns None if not set."""
-    raw = _load_config()
+    raw = _load_config(profile)
     if raw is None:
         return None
     return raw.get("worker_api_key", "").strip() or None
 
 
-def _worker_auth_headers():
+def _worker_auth_headers(profile=None):
     """Return curl args for Worker API auth. Empty list if no key configured."""
-    key = load_api_key()
+    key = load_api_key(profile)
     if key:
         return ["-H", f"Authorization: Bearer {key}"]
     return []
@@ -223,13 +308,14 @@ def save_credentials(
     email=None,
     worker_url=None,
     worker_api_key=None,
+    profile=None,
 ):
-    """Save credentials to the config file.
+    """Save credentials to the config file for the given profile.
 
     IM-specific fields (app_id, app_secret, email) go under ims.lark;
     infrastructure fields (worker_url, worker_api_key) stay top-level.
     """
-    target = default_config_file()
+    target = resolve_config_file(profile)
     raw = {}
     if os.path.exists(target):
         try:

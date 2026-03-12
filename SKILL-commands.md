@@ -169,3 +169,55 @@ python3 -m unittest discover -s .claude/skills/handoff/scripts/tests -p 'test_*.
 ```bash
 python3 -m py_compile .claude/skills/handoff/scripts/*.py .claude/skills/handoff/scripts/tests/test_*.py
 ```
+
+## Profiles (`/handoff profiles`)
+
+List all available config profiles and show which is the default:
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-list
+```
+
+Print the output as a formatted list. Mark the default profile. Do NOT enter Handoff mode.
+
+## Show Profile (`/handoff profiles show` or via `profile-show`)
+
+Show details of the active (or specified) profile:
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-show
+```
+
+With a specific profile:
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py --profile '<name>' profile-show
+```
+
+Print the output showing profile name, config file path, worker URL, app ID, and email (secrets redacted). Do NOT enter Handoff mode.
+
+## Set Default Profile (`/handoff default:<profile>`)
+
+Set the default config profile:
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-set-default '<name>'
+```
+
+Confirm the change to the user. Future `/handoff` calls without `use:` will use this profile. Do NOT enter Handoff mode.
+
+## Multi-Profile Config
+
+Config profiles allow multiple Lark app / worker configurations on one machine.
+
+- **Default profile** → `~/.handoff/config.json` (backward compatible)
+- **Named profiles** → `~/.handoff/profiles/<name>.json` (same structure)
+- **Default selection** → `~/.handoff/default_profile` (text file with profile name)
+
+Resolution order for active profile:
+1. `--profile` CLI argument (passed from `use:<name>` syntax)
+2. `HANDOFF_PROFILE` environment variable (persisted in session env file)
+3. `~/.handoff/default_profile` file
+4. Falls back to `"default"` → `~/.handoff/config.json`
+
+When a session activates with a non-default profile, the `config_profile` is stored in the sessions DB. Hooks read this to load the correct credentials.

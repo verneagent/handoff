@@ -45,6 +45,9 @@ def main():
     if not session:
         return  # No active handoff for this session
 
+    # Set active profile from session so config loads use the right profile
+    handoff_config.set_active_profile(session.get("config_profile", "default"))
+
     # During handoff, permission_prompt is handled by permission_bridge.py
     if notification_type == "permission_prompt":
         return

@@ -118,12 +118,18 @@ This skill supports sub-commands via arguments:
 - **`/handoff clear`** — Delete the current project's chat group and handoff database. Ask for confirmation first. **CLI only** — cannot run during handoff mode.
 - **`/handoff diag [--mode ws|http|both] [--chat-id ID] [--timeout N]`** — Run a permission bridge diagnostic: send a test card with buttons, poll for the response, and report whether the round-trip works. Default mode is `ws`. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff sidecar`** — Enter **sidecar mode**: join an existing external Lark group (not created by the bot) and only respond to bot-directed messages (@-mention, reply to bot message, or reaction/sticker). Uses the same handoff loop but filters messages and skips group modifications.
+- **`/handoff use:<profile>`** — Enter Handoff mode using a named config profile (e.g. `/handoff use:work`). Pass `--profile '<PROFILE>'` to `preflight.py`, `enter_handoff.py`, and all `handoff_ops.py` calls. Can be combined with group name: `/handoff use:work MyGroup`.
+- **`/handoff profiles`** — List all available config profiles and show which is the default. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff default:<profile>`** — Set the default config profile (e.g. `/handoff default:work`). Future `/handoff` calls without `use:` will use this profile. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff init profile:<profile>`** — Run the setup wizard for a named profile instead of the default. Creates `~/.handoff/profiles/<profile>.json`.
 
 Parse the argument string to determine which sub-command to execute.
 
+**Profile syntax:** When the argument string contains `use:<name>`, extract the profile name and pass `--profile '<name>'` to all Python script invocations. Remove the `use:<name>` token from the argument string before matching other sub-commands. For example, `/handoff use:work MyGroup` → profile is `work`, group name is `MyGroup`. When `profile:<name>` is present (for init), extract it similarly.
+
 **Guard:** Before running `init`, `deinit`, `clear`, `delete_admin`, or `purge_admin`, check if handoff is currently active. If it is, refuse and tell the user: "Cannot run this command during handoff mode. Send **handback** first to return to CLI."
 
-**Sub-command implementations:** For `chats`, `chats_admin`, `status`, `delete_admin`, `purge_admin`, `deinit`, `clear`, and `diag`, read `SKILL-commands.md` in the same directory for detailed code and instructions.
+**Sub-command implementations:** For `chats`, `chats_admin`, `status`, `delete_admin`, `purge_admin`, `deinit`, `clear`, `diag`, and `profiles`, read `SKILL-commands.md` in the same directory for detailed code and instructions.
 
 ## Sandbox: CRITICAL
 
@@ -149,7 +155,7 @@ If you find yourself outside the loop during active handoff, re-read this file a
 The workspace ID is `{machine}-{folder}`, where `folder` is derived from `HANDOFF_PROJECT_DIR` (falling back to cwd). Example: `MacBookPro-Users-alice-projects-myapp`. Computed by `lark_im.get_workspace_id()`, it identifies the physical code location (machine + folder path) and is stored in the Lark group description as `workspace:{id}`.
 
 Handoff data is stored in a single SQLite database at `~/.handoff/projects/{project}/handoff-data.db`. The database uses WAL mode for safe concurrent access (hooks and main process). It contains:
-- **`sessions` table** — Per-session handoff state: `session_id` (PK), `chat_id` (unique), `session_tool`, `session_model`, `last_checked`, `activated_at`, `operator_open_id` (resolved from config email at activation — filters to operator's messages only), `bot_open_id` (resolved from bot info at activation — used for sidecar-mode interaction filtering), `sidecar_mode` (1 if sidecar mode, 0 otherwise — scripts read this from the session instead of requiring a CLI flag).
+- **`sessions` table** — Per-session handoff state: `session_id` (PK), `chat_id` (unique), `session_tool`, `session_model`, `last_checked`, `activated_at`, `operator_open_id` (resolved from config email at activation — filters to operator's messages only), `bot_open_id` (resolved from bot info at activation — used for sidecar-mode interaction filtering), `sidecar_mode` (1 if sidecar mode, 0 otherwise — scripts read this from the session instead of requiring a CLI flag), `config_profile` (which config profile was used to activate — hooks read this to load the correct credentials).
 - **`messages` table** — Message history for both directions (`direction=sent|received`) with `message_id`, `source_message_id`, `chat_id`, `message_time`, `text`, `title`, `sent_at`.
 
 ## Help (`/handoff help`)
@@ -172,6 +178,10 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff clear` | Delete current project's chat group and database (CLI only) |
 | `/handoff sidecar` | Sidecar mode: join external group, respond to @-mentions only |
 | `/handoff diag` | Run permission bridge diagnostic (test card action → poll round-trip) |
+| `/handoff use:<profile>` | Enter handoff using a named config profile |
+| `/handoff profiles` | List available config profiles |
+| `/handoff default:<profile>` | Set the default config profile |
+| `/handoff init profile:<profile>` | Run setup wizard for a named profile |
 
 ## Preflight Check
 
@@ -179,6 +189,12 @@ Run the preflight check to verify all requirements:
 
 ```bash
 python3 $SKILL_SCRIPTS/preflight.py
+```
+
+If a profile was specified (via `use:<profile>`), pass `--profile '<profile>'`:
+
+```bash
+python3 $SKILL_SCRIPTS/preflight.py --profile '<profile>'
 ```
 
 ### For `/handoff check`
@@ -197,7 +213,7 @@ If the script exits with a non-zero code, tell the user: **"Handoff isn't set up
 
 ### For `/handoff init`
 
-Skip preflight. Read `SKILL-setup.md` and run the **Guided Setup** for ALL steps unconditionally.
+Skip preflight. Read `SKILL-setup.md` and run the **Guided Setup** for ALL steps unconditionally. If `profile:<name>` is specified, pass `--profile '<name>'` to all script invocations and save to `~/.handoff/profiles/<name>.json` instead of the default config.
 
 ## Sidecar Mode (`/handoff sidecar`)
 
@@ -254,6 +270,8 @@ python3 $SKILL_SCRIPTS/enter_handoff.py --session-model '${session_model}'
 ```
 
 Pass `--mode no-ask` or `--mode new` when the user explicitly requests those modes.
+
+Pass `--profile '<PROFILE>'` when a profile was specified (via `use:<profile>`). The profile is stored in the session DB so hooks can load the correct config.
 
 Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name (e.g. `/handoff MyGroup`). This looks up the group across all bot chats and auto-detects whether it's external (sidecar) or workspace-tagged (regular). When `sidecar_mode` is true in the response, follow the sidecar loop path (use `start_and_wait.py` as in Sidecar Mode Step 4).
 

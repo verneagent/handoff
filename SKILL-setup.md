@@ -8,6 +8,8 @@
 
 This file is only used by `/handoff init`. The `/handoff` command (no args) does NOT run setup — it runs preflight and tells the user to run `/handoff init` if anything is missing.
 
+**Profile support:** When invoked as `/handoff init profile:<name>`, pass `--profile '<name>'` to all `handoff_config.save_credentials()` calls and script invocations. The config will be saved to `~/.handoff/profiles/<name>.json` instead of the default `~/.handoff/config.json`. Show the profile name in the summary table.
+
 When invoked via `/handoff init`: run ALL steps. For each step where a value already exists, use **AskUserQuestion** with an additional first option: **"Keep existing: `<current_value>`"** (showing the current value, redacted for secrets — e.g. show only last 4 chars of app_secret). If the user chooses to keep existing, skip that step.
 
 **Deferred save:** During Steps 1–4, do NOT write to the config file or hooks files. Collect all values in memory. Infrastructure side effects (worker deploy, wrangler secrets) happen inline since they can't be deferred. After Step 4, show a summary and ask for confirmation before applying (see "After setup").
@@ -24,7 +26,7 @@ for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills
         sys.path.insert(0, p)
         break
 import handoff_config
-cfg = handoff_config._load_config() or {}
+cfg = handoff_config._load_config(profile='<PROFILE_OR_NONE>') or {}
 im = handoff_config._resolve_im_config(cfg) or {}
 print(json.dumps({
     'worker_url': cfg.get('worker_url', ''),
@@ -35,6 +37,8 @@ print(json.dumps({
 }))
 "
 ```
+
+When invoked with `profile:<name>`, replace `'<PROFILE_OR_NONE>'` with the profile name (e.g. `'work'`). For default init, use `None`.
 
 Store the output JSON as `existing`. Use these values when showing "Keep existing" options in each step. A non-empty string means the value exists.
 
@@ -183,16 +187,19 @@ for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills
     if os.path.exists(p):
         sys.path.insert(0, p)
         break
-import lark_im
-lark_im.save_credentials(
+import handoff_config
+handoff_config.save_credentials(
     worker_url='<WORKER_URL>',
     worker_api_key='<WORKER_API_KEY>',
     app_id='<APP_ID>',
     app_secret='<APP_SECRET>',
     email='<EMAIL>',
+    profile='<PROFILE_OR_NONE>',
 )
 "
 ```
+
+When invoked with `profile:<name>`, replace `'<PROFILE_OR_NONE>'` with the profile name. For default init, use `None`.
 
 Apply hooks by running: `python3 "$SKILL_SCRIPTS/install_hooks.py"`
 
