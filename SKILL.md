@@ -1,7 +1,7 @@
 ---
 name: handoff
 description: Hand off to Lark — continue interacting with Claude from your phone.
-allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task, Agent, TeamCreate, SendMessage, TeamDelete
 ---
 
 Hand off the CLI session to Lark so the user can continue interacting with Claude on the go.
@@ -549,6 +549,73 @@ python3 $SKILL_SCRIPTS/send_and_wait.py '<your response>'
 When including code blocks in messages, use **2-space indentation** for readability on mobile.
 
 Keep the message concise — Lark has size limits. For long output, summarize and mention the user can check the CLI for full details.
+
+## Agent Teams Integration
+
+When `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is set, the handoff lead agent can create and coordinate agent teams during handoff mode.
+
+### Detecting team requests
+
+In Step 2 (command checking), detect when the user asks to create a team, check team status, or communicate with teammates. Examples:
+
+- "Create a team of 3 to refactor the auth module"
+- "Team status" / "How's the team doing?"
+- "Tell the reviewer to focus on security"
+- "Shut down the team"
+
+### Creating a team
+
+Use the `TeamCreate` tool directly. The user's Lark message describes the work — translate it into a TeamCreate prompt. Example flow:
+
+1. User in Lark: "创建一个3人团队来重构 auth 模块"
+2. Lead calls `TeamCreate` with appropriate prompt and member count
+3. PostToolUse hook automatically forwards the team creation event to Lark
+4. Lead sends confirmation with team member names to Lark
+
+### Monitoring team progress
+
+Use `team_status.py` to read team/task state and send updates:
+
+```bash
+# List active teams
+python3 $SKILL_SCRIPTS/team_status.py list
+
+# Detailed status with progress bar
+python3 $SKILL_SCRIPTS/team_status.py status <team_id>
+
+# Format as Lark card content
+python3 $SKILL_SCRIPTS/team_status.py card <team_id>
+```
+
+When the user asks for team status, run `team_status.py card <team_id>` and send the output as a card:
+
+```bash
+python3 $SKILL_SCRIPTS/send_to_group.py "$(python3 $SKILL_SCRIPTS/team_status.py card <team_id>)" --title 'Team Progress'
+```
+
+### Communicating with teammates
+
+Use `SendMessage` to relay messages from the Lark user to specific teammates:
+
+- "Tell the coder to use TypeScript" → `SendMessage` to the "coder" teammate
+- "Ask all teammates for a status update" → `SendMessage` broadcast
+
+Teammate responses arrive via the shared task list. Check `team_status.py status` periodically during long team operations and send progress updates to Lark.
+
+### Team lifecycle during handoff
+
+- **Creation**: TeamCreate spawns teammates as local processes. They work independently.
+- **Monitoring**: Lead periodically checks task progress and reports to Lark.
+- **Completion**: When all tasks are done, lead summarizes results and sends to Lark.
+- **Cleanup**: Use `TeamDelete` when the team's work is complete.
+- **Handback**: If handback occurs while a team is active, warn the user that teammates are still running locally.
+
+### PostToolUse forwarding
+
+The hook automatically forwards these team events to Lark (regardless of message filter level):
+- `TeamCreate` — team spawned with member names
+- `SendMessage` — inter-agent messages (summary only)
+- `TeamDelete` — team dissolved
 
 ## Important Notes
 

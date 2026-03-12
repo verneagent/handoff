@@ -378,10 +378,53 @@ def _format_bash(tool_input, tool_response, cwd):
     return "", body
 
 
+def _format_team_create(tool_input, tool_response, cwd):
+    """Format TeamCreate event — team spawned."""
+    team_name = tool_response.get("teamName", "")
+    members = tool_response.get("members", [])
+    if not members:
+        return None, None
+
+    member_lines = []
+    for m in members:
+        name = m.get("name", "?")
+        agent_type = m.get("agentType", "")
+        member_lines.append(f"  • **{name}**" + (f" ({agent_type})" if agent_type else ""))
+
+    body = f"**Team created: {team_name}**\n" + "\n".join(member_lines)
+    return "", body
+
+
+def _format_send_message(tool_input, tool_response, cwd):
+    """Format SendMessage event — inter-agent communication."""
+    msg_type = tool_input.get("type", "message")
+    to = tool_input.get("to", "")
+    summary = tool_input.get("summary", "")
+
+    if msg_type == "shutdown_request":
+        body = f"**Shutting down** teammate: {to}"
+    elif msg_type == "broadcast":
+        body = f"**Broadcast:** {summary}" if summary else "**Broadcast sent**"
+    elif msg_type == "message" and to:
+        body = f"**→ {to}:** {summary}" if summary else f"**Message to {to}**"
+    else:
+        return None, None
+
+    return "", _truncate(body, 500)
+
+
+def _format_team_delete(tool_input, tool_response, cwd):
+    """Format TeamDelete event — team dissolved."""
+    return "", "**Team dissolved**"
+
+
 FORMATTERS = {
     "Edit": _format_edit,
     "Write": _format_write,
     "Bash": _format_bash,
+    "TeamCreate": _format_team_create,
+    "SendMessage": _format_send_message,
+    "TeamDelete": _format_team_delete,
 }
 
 
@@ -531,13 +574,17 @@ def main():
             if skip in command:
                 return
 
+    # Agent Teams events always bypass message filter
+    ALWAYS_FORWARD = {"TeamCreate", "SendMessage", "TeamDelete"}
+
     # Message filter: concise = no forwarding, important = edit/write only
     msg_filter = session.get("message_filter", "concise")
     should_filter = False
-    if msg_filter == "concise":
-        should_filter = True
-    elif msg_filter == "important" and tool_name == "Bash":
-        should_filter = True
+    if tool_name not in ALWAYS_FORWARD:
+        if msg_filter == "concise":
+            should_filter = True
+        elif msg_filter == "important" and tool_name == "Bash":
+            should_filter = True
 
     if should_filter:
         _send_or_update_working(session_id, session, tool_name, tool_input)

@@ -25,7 +25,7 @@
   ],
   "PostToolUse": [
     {
-      "matcher": "Edit|Write|Bash",
+      "matcher": "Edit|Write|Bash|TeamCreate|SendMessage|TeamDelete",
       "hooks": [
         {
           "type": "command",
@@ -37,7 +37,7 @@
   ],
   "PostToolUseFailure": [
     {
-      "matcher": "Edit|Write|Bash",
+      "matcher": "Edit|Write|Bash|TeamCreate|SendMessage|TeamDelete",
       "hooks": [
         {
           "type": "command",
