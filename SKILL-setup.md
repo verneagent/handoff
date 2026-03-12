@@ -134,13 +134,13 @@ Use the `app_id` and `app_secret` collected in Step 2.
 
   > **The email `<EMAIL>` can't be resolved to a Lark user.**
   >
-  > This usually means the Lark app is not visible to this user. To fix it:
-  > 1. Go to the **Lark Admin Console** (not the Developer Console) — [admin.larksuite.com](https://admin.larksuite.com) or [admin.feishu.cn](https://admin.feishu.cn)
-  > 2. Navigate to **Workplace** → **App Management** → find your app
-  > 3. Set **App Availability** (可用范围) to include the user or set it to "All employees"
-  > 4. If the user is an **external** member (e.g. personal email, not part of the organization), the org admin must enable **"Allow external users"** in the app's availability settings
+  > Common causes and fixes:
   >
-  > After updating availability, wait a moment and try again.
+  > 1. **App not visible to this user** — Go to the **Lark Admin Console** (not the Developer Console) — [admin.larksuite.com](https://admin.larksuite.com) or [admin.feishu.cn](https://admin.feishu.cn). Navigate to **Workplace** → **App Management** → find your app → set **App Availability** (可用范围) to include the user or "All employees".
+  > 2. **Wrong email** — The `contact:user.id:readonly` API can only look up users **within the same Lark organization**. Make sure the email matches the account used to sign in to this org's Lark workspace. Personal emails (Gmail, Outlook) only work if that's the login email for the org.
+  > 3. **Missing scope** — Verify the app has `contact:user.id:readonly` permission in the Developer Console.
+  >
+  > After fixing, wait a moment and try again.
 
   Use **AskUserQuestion** with options: "Retry" (re-run the validation) and "Skip" (proceed without validation — the user will fix it later).
 
