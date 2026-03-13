@@ -513,13 +513,7 @@ python3 scripts/handoff_ops.py merge-forward --message-id '<MESSAGE_ID>'
 
 Parse the JSON output — each line is one message from the forwarded thread. Present the conversation to the user as context. If any child messages contain images (`msg_type: "image"`), download them using the image download flow above with the child message's `message_id`. Summarize or analyze the thread as requested.
 
-**Heartbeat**: If processing takes more than 60 seconds, send a brief status update to Lark so the user knows you're still working. Use "Working..." as the title and describe what you're doing in the body:
-
-```bash
-python3 scripts/send_to_group.py '<what you are working on>' --color grey --title 'Working...' --card
-```
-
-Send additional heartbeats every ~60 seconds for long-running tasks.
+**Working card**: The PostToolUse hook automatically sends and updates a "Working..." card in Lark during tool execution. The card title escalates with time ("Working..." → "Working hard..." → etc.) and includes a Stop button. You do **not** need to send separate heartbeat messages — the hook handles progress display. The card updates to "Done ✓" when you send your response.
 
 ### Step 4: Send your response AND wait for next message
 
@@ -538,7 +532,7 @@ python3 scripts/send_and_wait.py '<your response>'
 
 **Format options** (same flags as `send_to_group.py`):
 - **Markdown card** (default, no `--card`): Use for ALL conversational responses — answers, explanations, questions, confirmations, analysis results. This is the default.
-- **Status card** (`--card`): Use for brief system messages only. For heartbeats during Step 3, use `send_to_group.py` instead (no wait needed).
+- **Status card** (`--card`): Use for brief system messages only.
 - **Form card**: For option selections and text input, use `handoff_ops.py send-form-select` / `send-form-input` followed by `wait_for_reply.py --timeout 0` to get the form response. Then continue processing and use `send_and_wait.py` for the final response.
 
 When including code blocks in messages, use **2-space indentation** for readability on mobile.
