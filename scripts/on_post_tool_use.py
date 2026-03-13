@@ -556,8 +556,13 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
             existing_msg_id, created_at, _counter = handoff_db.get_working_state(session_id)
             elapsed = int(_time.time()) - created_at if created_at else 0
             title = _working_title(elapsed)
-            # Use V1 card format for reliable send + update (V2 can be
-            # down, causing 230099 fallback that breaks update_card_message).
+            # Use V1 card format (build_card) instead of V2 (build_working_card /
+            # build_markdown_card).  During Lark Card V2 outages (error 230099),
+            # send_message falls back to V1, but update_card_message has no such
+            # fallback — it fails silently, causing each PostToolUse to create a
+            # new card instead of updating the existing one.  V1 cards support
+            # title, markdown body, and buttons — everything the working card
+            # needs — and send/update work reliably regardless of V2 status.
             card = lark_im.build_card(
                 title, body=summary, color="grey",
                 buttons=[("Stop", "__stop__", "danger")],
