@@ -399,7 +399,7 @@ class WorkingCardTest(unittest.TestCase):
         action_el = elements[1]
         self.assertEqual(action_el["tag"], "action")
         btn = action_el["actions"][0]
-        self.assertEqual(btn["type"], "danger")
+        self.assertEqual(btn["type"], "default")
         self.assertEqual(btn["value"]["action"], "__stop__")
         self.assertEqual(btn["value"]["chat_id"], "oc_123")
 

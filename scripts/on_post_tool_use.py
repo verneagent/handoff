@@ -565,7 +565,7 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
             # needs — and send/update work reliably regardless of V2 status.
             card = lark_im.build_card(
                 title, body=summary, color="grey",
-                buttons=[("Stop", "__stop__", "danger")],
+                buttons=[("Stop", "__stop__", "default")],
                 chat_id=chat_id,
             )
 

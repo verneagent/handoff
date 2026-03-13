@@ -202,7 +202,7 @@ def build_working_card(content, title="", color="grey", chat_id="",
             "actions": [{
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "Stop"},
-                "type": "danger",
+                "type": "default",
                 "value": stop_value,
             }],
         })
