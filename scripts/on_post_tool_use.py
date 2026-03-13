@@ -556,8 +556,12 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
             existing_msg_id, created_at, _counter = handoff_db.get_working_state(session_id)
             elapsed = int(_time.time()) - created_at if created_at else 0
             title = _working_title(elapsed)
-            card = lark_im.build_working_card(
-                summary, title=title, color="grey", chat_id=chat_id,
+            # Use V1 card format for reliable send + update (V2 can be
+            # down, causing 230099 fallback that breaks update_card_message).
+            card = lark_im.build_card(
+                title, body=summary, color="grey",
+                buttons=[("Stop", "__stop__", "danger")],
+                chat_id=chat_id,
             )
 
             if existing_msg_id:
@@ -696,9 +700,8 @@ def _check_stop_signal(session_id, session):
             if token:
                 msg_id = handoff_db.get_working_message(session_id)
                 if msg_id:
-                    stopped_card = lark_im.build_working_card(
-                        "Stopped by user.", title="Stopped",
-                        color="red", show_stop=False,
+                    stopped_card = lark_im.build_card(
+                        "Stopped", body="Stopped by user.", color="red",
                     )
                     try:
                         lark_im.update_card_message(token, msg_id, stopped_card)
