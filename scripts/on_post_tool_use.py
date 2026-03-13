@@ -628,8 +628,10 @@ def main():
             should_filter = True
 
     if should_filter:
-        _send_or_update_working(session_id, session, tool_name, tool_input)
-        _check_stop_signal(session_id, session)
+        # Check local stop flag first — if set, don't overwrite the card
+        if not os.path.exists(_stop_flag_path(session_id)):
+            _send_or_update_working(session_id, session, tool_name, tool_input)
+            _check_stop_signal(session_id, session)
         return
 
     if is_failure:
@@ -654,8 +656,10 @@ def main():
             return
         color = "grey"
 
-    _send_card(session, title, body, color)
-    _check_stop_signal(session_id, session)
+    # Don't send new cards if stop flag is set
+    if not os.path.exists(_stop_flag_path(session_id)):
+        _send_card(session, title, body, color)
+        _check_stop_signal(session_id, session)
 
 
 def _stop_flag_path(session_id):
