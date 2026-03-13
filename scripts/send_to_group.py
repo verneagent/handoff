@@ -255,7 +255,16 @@ def _reset_working_state():
                 token = lark_im.get_tenant_token(
                     credentials["app_id"], credentials["app_secret"],
                 )
-                done_card = lark_im.build_card("Done ✓", color="green")
+                _, created_at, _ = handoff_db.get_working_state(session_id)
+                import time as _time
+                elapsed = int(_time.time()) - created_at if created_at else 0
+                if elapsed < 60:
+                    body = f"Completed in {elapsed}s"
+                else:
+                    mins = elapsed // 60
+                    secs = elapsed % 60
+                    body = f"Completed in {mins}m {secs}s"
+                done_card = lark_im.build_card("Done ✓", body=body, color="green")
                 lark_im.update_card_message(token, msg_id, done_card)
         except Exception:
             pass  # Non-critical — card may already be gone
