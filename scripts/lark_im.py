@@ -64,10 +64,10 @@ def resolve_session_context():
     """Load credentials, get token, and resolve active handoff session.
 
     Convenience helper that combines the repeated boilerplate of:
-    1. load_credentials()
-    2. HANDOFF_SESSION_ID from env
-    3. get_tenant_token()
-    4. get_session() + chat_id extraction
+    1. HANDOFF_SESSION_ID from env
+    2. get_session() + set active profile from session
+    3. load_credentials() (with correct profile)
+    4. get_tenant_token()
 
     Returns:
         dict with keys: token, session_id, chat_id, session
@@ -75,21 +75,24 @@ def resolve_session_context():
     Raises:
         RuntimeError: on any missing or invalid state.
     """
-    from handoff_config import load_credentials
-
-    credentials = load_credentials()
-    if not credentials:
-        raise RuntimeError("No credentials configured")
+    import handoff_config
 
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         raise RuntimeError("HANDOFF_SESSION_ID is not set")
 
-    token = get_tenant_token(credentials["app_id"], credentials["app_secret"])
-
     session = get_session(session_id)
     if not session:
         raise RuntimeError(f"No active session for {session_id}")
+
+    # Set profile before loading credentials so the correct config file is used
+    handoff_config.set_active_profile(session.get("config_profile", "default"))
+
+    credentials = handoff_config.load_credentials()
+    if not credentials:
+        raise RuntimeError("No credentials configured")
+
+    token = get_tenant_token(credentials["app_id"], credentials["app_secret"])
 
     chat_id = session.get("chat_id")
     if not chat_id:

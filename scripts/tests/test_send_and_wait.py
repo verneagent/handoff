@@ -94,6 +94,7 @@ class ResolveSessionContextTest(unittest.TestCase):
 
     def test_no_credentials_raises(self):
         os.environ["HANDOFF_SESSION_ID"] = "s1"
+        handoff_db.register_session("s1", "chat-1", "opus")
         orig_load = handoff_config.load_credentials
         handoff_config.load_credentials = lambda: None
         try:

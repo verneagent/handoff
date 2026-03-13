@@ -14,12 +14,13 @@ import lark_im
 
 
 def check_credentials():
+    cfg_file = handoff_config.resolve_config_file()
     try:
-        with open(handoff_config.CONFIG_FILE) as f:
+        with open(cfg_file) as f:
             data = json.load(f)
     except FileNotFoundError:
         return False, (
-            f"Config file not found: {handoff_config.CONFIG_FILE}\n"
+            f"Config file not found: {cfg_file}\n"
             f"Create it with app_id, app_secret, worker_url, and email.\n"
             f"  app_id/app_secret: Get from https://open.larksuite.com/app → your app → Credentials\n"
             f"  worker_url: Deploy the worker and note the URL. Run /handoff init\n"
@@ -27,7 +28,7 @@ def check_credentials():
         )
     except json.JSONDecodeError:
         return False, (
-            f"Config file has invalid JSON: {handoff_config.CONFIG_FILE}\n"
+            f"Config file has invalid JSON: {cfg_file}\n"
             f"Fix the syntax or delete it and run /handoff init to recreate."
         )
 
@@ -35,14 +36,14 @@ def check_credentials():
     ims = data.get("ims")
     if not isinstance(ims, dict):
         return False, (
-            f"Missing 'ims' section in {handoff_config.CONFIG_FILE}\n"
+            f"Missing 'ims' section in {cfg_file}\n"
             f"Run /handoff init to configure."
         )
     provider = data.get("default_im", "lark")
     im_cfg = ims.get(provider)
     if not isinstance(im_cfg, dict):
         return False, (
-            f"No config for IM provider '{provider}' in {handoff_config.CONFIG_FILE}"
+            f"No config for IM provider '{provider}' in {cfg_file}"
         )
 
     missing = []
@@ -54,16 +55,17 @@ def check_credentials():
         missing.append("email")
 
     if missing:
-        return False, (f"Missing {', '.join(missing)} in {handoff_config.CONFIG_FILE}")
+        return False, (f"Missing {', '.join(missing)} in {cfg_file}")
     return True, None
 
 
 def check_worker_url():
     url = handoff_config.load_worker_url()
     if not url:
+        cfg_file = handoff_config.resolve_config_file()
         return False, (
             f"Missing worker_url.\n"
-            f"Add worker_url to {handoff_config.CONFIG_FILE}\n"
+            f"Add worker_url to {cfg_file}\n"
             f"Deploy the worker and note the URL. Run /handoff init"
         )
     return True, url
@@ -72,8 +74,9 @@ def check_worker_url():
 def check_api_key():
     key = handoff_config.load_api_key()
     if not key:
+        cfg_file = handoff_config.resolve_config_file()
         return False, (
-            f"Missing worker_api_key in {handoff_config.CONFIG_FILE}\n"
+            f"Missing worker_api_key in {cfg_file}\n"
             f'Generate a random key: python3 -c "import secrets; print(secrets.token_urlsafe(32))"\n'
             f"Add it to the config file AND as a Cloudflare Worker secret:\n"
             f"  cd .claude/skills/handoff/worker && npx wrangler secret put API_KEY"
@@ -218,13 +221,16 @@ def _redact(val):
 
 def report():
     """Print a detailed status report of all configured values."""
+    profile = handoff_config._resolve_profile()
+    cfg_file = handoff_config.resolve_config_file()
     print("=== Handoff Configuration Report ===\n")
 
     # Config file
-    print(f"Config file: {handoff_config.CONFIG_FILE}")
+    print(f"Profile: {profile}")
+    print(f"Config file: {cfg_file}")
     config = {}
     try:
-        with open(handoff_config.CONFIG_FILE) as f:
+        with open(cfg_file) as f:
             config = json.load(f)
     except FileNotFoundError:
         print("  (file not found)\n")
@@ -375,7 +381,22 @@ def _parse_tool(argv):
     return "claude"
 
 
+def _parse_profile(argv):
+    """Return profile name from --profile <name> or --profile=<name>."""
+    args = argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--profile" and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith("--profile="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def main():
+    profile = _parse_profile(sys.argv)
+    if profile:
+        handoff_config.set_active_profile(profile)
+
     if "--report" in sys.argv:
         report()
         return

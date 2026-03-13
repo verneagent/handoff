@@ -23,6 +23,7 @@ Env var resolution (in order):
 import argparse
 import json
 import os
+import shlex
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -118,6 +119,25 @@ def _resolve_env():
             except Exception:
                 pass
 
+    # Persist HANDOFF_PROFILE if set (via --profile or env)
+    profile = handoff_config._resolve_profile()
+    if profile and profile != "default":
+        os.environ["HANDOFF_PROFILE"] = profile
+        # Write to CLAUDE_ENV_FILE so subsequent Bash tool calls inherit it
+        env_file = os.environ.get("CLAUDE_ENV_FILE")
+        if env_file:
+            try:
+                lines = []
+                if os.path.exists(env_file):
+                    with open(env_file) as f:
+                        lines = [l for l in f.readlines()
+                                 if not l.startswith("export HANDOFF_PROFILE=")]
+                lines.append(f"export HANDOFF_PROFILE={shlex.quote(profile)}\n")
+                with open(env_file, "w") as f:
+                    f.writelines(lines)
+            except Exception:
+                pass
+
     missing = [v for v in ("HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_ID", "HANDOFF_SESSION_TOOL")
                if not os.environ.get(v)]
     if missing:
@@ -152,7 +172,16 @@ def main():
         default=None,
         help="Join a specific group by name (auto-detects sidecar vs regular)",
     )
+    p.add_argument(
+        "--profile",
+        default=None,
+        help="Config profile name (default: from env or default_profile)",
+    )
     args = p.parse_args()
+
+    # Set active profile early so all config loads use the right profile
+    if args.profile:
+        handoff_config.set_active_profile(args.profile)
 
     # Check if hooks were just installed but not yet loaded (requires restart)
     marker = f"/private/tmp/claude-{os.getuid()}/handoff-hooks-pending"
@@ -212,6 +241,7 @@ def main():
         except Exception:
             pass
 
+        profile = handoff_config._resolve_profile()
         handoff_db.activate_handoff(
             session_id,
             chat_id_to_activate,
@@ -219,6 +249,7 @@ def main():
             operator_open_id=open_id,
             bot_open_id=bot_open_id,
             sidecar_mode=sidecar,
+            config_profile=profile,
         )
         _jprint({
             "status": "ready",
@@ -226,6 +257,7 @@ def main():
             "session_id": session_id,
             "project_dir": project_dir,
             "sidecar_mode": sidecar,
+            "config_profile": profile,
         })
         return 0
 
@@ -320,6 +352,7 @@ def main():
     except Exception:
         pass
 
+    profile = handoff_config._resolve_profile()
     handoff_db.activate_handoff(
         session_id,
         chat_id_to_activate,
@@ -327,6 +360,7 @@ def main():
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=False,
+        config_profile=profile,
     )
 
     _jprint({
