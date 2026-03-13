@@ -493,6 +493,16 @@ async function handleWebhook(request, env) {
 
     // --- Stop button: store flag in KV, return "Stopping..." card ---
     if (actionText === "__stop__") {
+      // Authorization: only owner and coowners can stop
+      const approvers = value.approvers;
+      if (Array.isArray(approvers) && approvers.length > 0) {
+        const operatorId = (event.operator || {}).open_id || "";
+        if (!approvers.includes(operatorId)) {
+          return Response.json({
+            toast: { type: "error", content: "Only the owner or coowners can stop" },
+          });
+        }
+      }
       const chatId = value.chat_id;
       if (chatId) {
         await env.LARK_REPLIES.put(`stop:chat:${chatId}`, "1", {

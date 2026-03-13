@@ -563,10 +563,19 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
             # new card instead of updating the existing one.  V1 cards support
             # title, markdown body, and buttons — everything the working card
             # needs — and send/update work reliably regardless of V2 status.
+            # Build approvers list: owner + coowners can stop
+            approvers = []
+            op_id = session.get("operator_open_id", "")
+            if op_id:
+                approvers.append(op_id)
+            for g in session.get("guests") or []:
+                if g.get("role") == "coowner" and g.get("open_id"):
+                    approvers.append(g["open_id"])
             card = lark_im.build_card(
                 title, body=summary, color="grey",
                 buttons=[("Stop", "__stop__", "default")],
                 chat_id=chat_id,
+                extra_value={"approvers": approvers} if approvers else None,
             )
 
             if existing_msg_id:
