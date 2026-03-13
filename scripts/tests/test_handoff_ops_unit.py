@@ -261,5 +261,37 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertFalse(handoff_db.get_autoapprove("chat-aa3"))
 
 
+class WorkspaceTagMatchTest(unittest.TestCase):
+    """Tests for _workspace_tag_matches in send_to_group."""
+
+    def setUp(self):
+        import send_to_group  # type: ignore
+        self._match = send_to_group._workspace_tag_matches
+
+    def test_exact_match(self):
+        desc = "workspace:CarbonMac-Users-foo-bar"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
+
+    def test_match_followed_by_newline(self):
+        desc = "workspace:CarbonMac-Users-foo-bar\nextra info"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
+
+    def test_no_prefix_match(self):
+        """workspace:A-B must NOT match workspace:A-B-C (the worktree bug)."""
+        desc = "workspace:CarbonMac-Users-foo-bar-native_test2"
+        self.assertFalse(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
+
+    def test_no_match(self):
+        desc = "workspace:other-machine-path"
+        self.assertFalse(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
+
+    def test_match_with_space_after(self):
+        desc = "workspace:CarbonMac-Users-foo-bar other-tag"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
+
+    def test_empty_desc(self):
+        self.assertFalse(self._match("", "workspace:foo"))
+
+
 if __name__ == "__main__":
     unittest.main()

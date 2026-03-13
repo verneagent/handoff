@@ -29,6 +29,24 @@ def get_worktree_name():
     return handoff_config.get_worktree_name() or os.path.basename(handoff_config._require_project_dir())
 
 
+def _workspace_tag_matches(desc, tag):
+    """Check if description contains the exact workspace tag (not a prefix).
+
+    The tag (e.g. 'workspace:CarbonMac-Users-foo-bar') must appear as a
+    complete token — followed by whitespace, newline, or end of string.
+    This prevents 'workspace:A-B' from matching 'workspace:A-B-C'.
+    """
+    start = 0
+    while True:
+        idx = desc.find(tag, start)
+        if idx < 0:
+            return False
+        end = idx + len(tag)
+        if end >= len(desc) or desc[end] in (" ", "\n", "\r", "\t"):
+            return True
+        start = end
+
+
 def find_groups_for_workspace(token, workspace_id, open_id=None):
     """Find all Lark groups tagged with this workspace ID.
 
@@ -48,7 +66,7 @@ def find_groups_for_workspace(token, workspace_id, open_id=None):
             try:
                 info = lark_im.get_chat_info(token, cid)
                 desc = info.get("description") or ""
-                if workspace_tag not in desc:
+                if not _workspace_tag_matches(desc, workspace_tag):
                     continue
                 # If open_id is provided, verify user is a member of this chat
                 if open_id:
