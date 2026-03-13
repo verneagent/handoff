@@ -505,10 +505,28 @@ def _tool_summary(tool_name, tool_input):
     return f"`{tool_name}`"
 
 
+_WORKING_TITLES = [
+    (1, "Working..."),
+    (4, "Working hard..."),
+    (7, "Working really hard..."),
+    (10, "Working super hard..."),
+]
+
+
+def _working_title(counter):
+    """Return an escalating title based on tool call count."""
+    title = _WORKING_TITLES[0][1]
+    for threshold, t in _WORKING_TITLES:
+        if counter >= threshold:
+            title = t
+    return title
+
+
 def _send_or_update_working(session_id, session, tool_name, tool_input):
     """Send or update the 'Working...' card for filtered messages.
 
     Uses a file lock to prevent parallel hooks from each sending a new card.
+    Title escalates with the number of tool calls since the card was created.
     """
     import fcntl
 
@@ -517,7 +535,6 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
         return
 
     summary = _tool_summary(tool_name, tool_input)
-    card = lark_im.build_markdown_card(summary, title="Working hard...", color="grey")
 
     lock_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
     os.makedirs(lock_dir, exist_ok=True)
@@ -526,10 +543,14 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
     with open(lock_path, "w") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
-            existing_msg_id = handoff_db.get_working_message(session_id)
+            existing_msg_id, counter = handoff_db.get_working_state(session_id)
+            title = _working_title(counter + 1)
+            card = lark_im.build_markdown_card(summary, title=title, color="grey")
+
             if existing_msg_id:
                 try:
                     lark_im.update_card_message(token, existing_msg_id, card)
+                    handoff_db.set_working_message(session_id, existing_msg_id)
                     return
                 except Exception as e:
                     warn(f"failed to update working card: {e}")
