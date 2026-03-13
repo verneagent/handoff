@@ -242,10 +242,23 @@ def create_handoff_group(
 
 
 def _reset_working_state():
-    """Clear the working card state and stop flag so the next batch gets a fresh card."""
+    """Update working card to 'Done', then clear state and stop flag."""
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         return
+    # Update working card to "Done" before clearing
+    msg_id = handoff_db.get_working_message(session_id)
+    if msg_id:
+        try:
+            credentials = handoff_config.load_credentials()
+            if credentials:
+                token = lark_im.get_tenant_token(
+                    credentials["app_id"], credentials["app_secret"],
+                )
+                done_card = lark_im.build_card("Done ✓", color="green")
+                lark_im.update_card_message(token, msg_id, done_card)
+        except Exception:
+            pass  # Non-critical — card may already be gone
     handoff_db.clear_working_message(session_id)
     handoff_db.clear_autoapprove_message(session_id)
     # Clear stop flag — user sent a new message, so stop is stale
