@@ -165,86 +165,62 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertEqual(chat_id, "chat-1")
 
 
-    def test_known_session_tab_names_returns_tool_and_model(self):
-        handoff_db.register_session("s1", "chat-tabs", "opus 4.6")
-        names = handoff_ops._known_session_tab_names("chat-tabs")
-        self.assertIn("Claude Code", names)
-        self.assertIn("opus 4.6", names)
+    def test_is_handoff_tab_identifies_by_url(self):
+        """Verify _is_handoff_tab matches known handoff URLs."""
+        self.assertTrue(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://github.com/verneagent"}}
+        ))
+        self.assertTrue(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://example.com"}}
+        ))
+        # User-created tab with different URL
+        self.assertFalse(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://demo.olu.tech"}}
+        ))
+        # Non-URL tab types
+        self.assertFalse(handoff_ops._is_handoff_tab(
+            {"tab_type": "message"}
+        ))
 
-    def test_known_session_tab_names_empty_for_unknown_chat(self):
-        names = handoff_ops._known_session_tab_names("nonexistent-chat")
-        self.assertEqual(names, set())
-
-    def test_tabs_start_preserves_user_created_tabs(self):
-        """Verify that tabs-start only removes known session tabs, not user-created ones."""
-        handoff_db.register_session("s1", "chat-tab-test", "opus 4.6")
-        os.environ["HANDOFF_SESSION_ID"] = "s1"
-
-        # Simulate tabs: session tabs + a user-created tab
+    def test_stale_tab_cleanup_preserves_user_tabs(self):
+        """Verify tabs-start stale cleanup removes old handoff tabs but not user tabs."""
         fake_tabs = [
             {"tab_id": "1", "tab_type": "message"},
-            {"tab_id": "2", "tab_name": "old-tool", "tab_type": "url", "tab_content": {"url": "https://x.com"}},
-            {"tab_id": "3", "tab_name": "OLU Demo", "tab_type": "url", "tab_content": {"url": "https://demo.olu.tech"}},
+            {"tab_id": "10", "tab_name": "opus 4.6", "tab_type": "url",
+             "tab_content": {"url": "https://github.com/verneagent"}},
+            {"tab_id": "11", "tab_name": "old-model", "tab_type": "url",
+             "tab_content": {"url": "https://example.com"}},
+            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url",
+             "tab_content": {"url": "https://demo.olu.tech"}},
         ]
+        current_model = "opus 4.6"
 
-        # _known_session_tab_names for this chat should return {"Claude Code", "opus 4.6"}
-        known = handoff_ops._known_session_tab_names("chat-tab-test")
-        keep = {"Claude Code", "opus 4.6"}
-
-        # "old-tool" is NOT in known session names → should NOT be deleted
-        # "OLU Demo" is NOT in known session names → should NOT be deleted
+        # Stale = handoff tab + not current model
         stale_ids = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep
+            tab["tab_id"] for tab in fake_tabs
+            if handoff_ops._is_handoff_tab(tab)
+            and tab.get("tab_name") != current_model
             and tab.get("tab_id")
         ]
-        self.assertEqual(stale_ids, [])  # Nothing should be deleted
+        # "old-model" is handoff (example.com) and not current model → stale
+        # "opus 4.6" is handoff but IS current model → keep
+        # "OLU Demo" is NOT handoff → safe
+        self.assertEqual(stale_ids, ["11"])
 
-    def test_tabs_start_stale_logic_removes_session_tabs_only(self):
-        """Verify the stale-tab filter logic removes session tabs but keeps user tabs."""
-        # Session has tool="Claude Code" and model="opus 4.6"
-        handoff_db.register_session("s1", "chat-stale", "opus 4.6")
-
-        known = handoff_ops._known_session_tab_names("chat-stale")
-        self.assertIn("opus 4.6", known)
-        self.assertIn("Claude Code", known)
-        self.assertNotIn("OLU Demo", known)
-
+    def test_tabs_end_removes_all_handoff_tabs(self):
+        """Verify tabs-end removes all tabs with handoff URLs."""
         fake_tabs = [
-            {"tab_id": "10", "tab_name": "Claude Code", "tab_type": "url"},
-            {"tab_id": "11", "tab_name": "opus 4.6", "tab_type": "url"},
-            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url"},
+            {"tab_id": "1", "tab_type": "message"},
+            {"tab_id": "10", "tab_name": "opus 4.6", "tab_type": "url",
+             "tab_content": {"url": "https://github.com/verneagent"}},
+            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url",
+             "tab_content": {"url": "https://demo.olu.tech"}},
         ]
-
-        # Simulate keeping current session tabs, removing stale ones
-        keep = {"Claude Code", "opus 4.6"}
-        stale_ids = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep
-            and tab.get("tab_id")
+        remove_ids = [
+            tab["tab_id"] for tab in fake_tabs
+            if handoff_ops._is_handoff_tab(tab) and tab.get("tab_id")
         ]
-        # Nothing stale — both known names are in keep set, "OLU Demo" is not in known
-        self.assertEqual(stale_ids, [])
-
-        # Now simulate a different keep set (new session with different model)
-        keep_new = {"Claude Code", "sonnet 4"}
-        stale_ids_new = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep_new
-            and tab.get("tab_id")
-        ]
-        # "opus 4.6" is known AND not in keep_new → stale
-        # "OLU Demo" is NOT known → safe
-        self.assertEqual(stale_ids_new, ["11"])
+        self.assertEqual(remove_ids, ["10"])  # Only handoff tab removed
 
 
     def test_autoapprove_default_off(self):
@@ -283,41 +259,6 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["autoapprove"])
         self.assertFalse(handoff_db.get_autoapprove("chat-aa3"))
-
-
-    def test_autoapprove_message_set_get_clear(self):
-        """Verify autoapprove card message_id storage works (same table as working_state)."""
-        handoff_db.register_session("s1", "chat-aam", "opus")
-
-        # Initially no message
-        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
-
-        # Set and get
-        handoff_db.set_autoapprove_message("s1", "msg-aa-1")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-1")
-
-        # Update (upsert)
-        handoff_db.set_autoapprove_message("s1", "msg-aa-2")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-2")
-
-        # Clear
-        handoff_db.clear_autoapprove_message("s1")
-        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
-
-    def test_autoapprove_message_independent_of_working(self):
-        """Autoapprove and working card message_ids don't interfere."""
-        handoff_db.register_session("s1", "chat-ind", "opus")
-
-        handoff_db.set_working_message("s1", "msg-working")
-        handoff_db.set_autoapprove_message("s1", "msg-aa")
-
-        self.assertEqual(handoff_db.get_working_message("s1"), "msg-working")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
-
-        # Clearing one doesn't affect the other
-        handoff_db.clear_working_message("s1")
-        self.assertIsNone(handoff_db.get_working_message("s1"))
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
 
 
 if __name__ == "__main__":

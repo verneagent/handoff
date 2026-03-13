@@ -779,94 +779,58 @@ def _find_tab_by_name(tabs, name):
     return None
 
 
-def _known_session_tab_names(chat_id):
-    """Return set of tab names that belong to handoff sessions (tool + model names)."""
-    names = set()
-    try:
-        conn = handoff_db._get_db()
-        rows = conn.execute(
-            "SELECT session_tool, session_model FROM sessions WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchall()
-        for row in rows:
-            if row[0]:
-                names.add(row[0])
-            if row[1]:
-                names.add(row[1])
-    except Exception:
-        pass
-    return names
+_HANDOFF_TAB_URLS = {"https://github.com/verneagent", "https://example.com"}
+
+
+def _is_handoff_tab(tab):
+    """Check if a URL tab was created by handoff (identified by its URL)."""
+    if tab.get("tab_type") != "url":
+        return False
+    url = (tab.get("tab_content") or {}).get("url", "")
+    return url in _HANDOFF_TAB_URLS
 
 
 def cmd_tabs_start(args):
     creds = _require_credentials()
     token = _require_token(creds)
-    chat_id, tool, model = _session_tool_model(args)
+    chat_id, _tool, model = _session_tool_model(args)
     if not chat_id:
         raise RuntimeError("missing_chat_id")
 
-    tab_url = str(args.tab_url or "https://example.com").strip()
+    tab_url = str(args.tab_url or "https://github.com/verneagent").strip()
     tabs = lark_im.list_chat_tabs(token, chat_id)
 
-    # Clean up stale URL tabs from previous sessions — only remove tabs
-    # whose names match known session tool/model names (not user-created tabs)
-    known_session_names = _known_session_tab_names(chat_id)
-    keep_names = {tool, model}
+    # Clean up stale handoff tabs (identified by URL) that don't match current model
     stale_ids = [
-        tab["tab_id"]
-        for tab in tabs
-        if tab.get("tab_type") == "url"
-        and tab.get("tab_name") in known_session_names
-        and tab.get("tab_name") not in keep_names
+        tab["tab_id"] for tab in tabs
+        if _is_handoff_tab(tab)
+        and tab.get("tab_name") != model
         and tab.get("tab_id")
     ]
     if stale_ids:
         lark_im.delete_chat_tabs(token, chat_id, stale_ids)
         tabs = lark_im.list_chat_tabs(token, chat_id)
 
-    tool_tab = _find_tab_by_name(tabs, tool)
+    # Only create a model tab (no tool tab)
     model_tab = _find_tab_by_name(tabs, model)
-
-    missing = []
-    if not tool_tab:
-        missing.append(
-            {"tab_name": tool, "tab_type": "url", "tab_content": {"url": tab_url}}
-        )
     if not model_tab:
-        missing.append(
-            {"tab_name": model, "tab_type": "url", "tab_content": {"url": tab_url}}
+        lark_im.create_chat_tabs(
+            token, chat_id,
+            [{"tab_name": model, "tab_type": "url", "tab_content": {"url": tab_url}}],
         )
-    if missing:
-        lark_im.create_chat_tabs(token, chat_id, missing)
         tabs = lark_im.list_chat_tabs(token, chat_id)
-        tool_tab = _find_tab_by_name(tabs, tool)
+        model_tab = _find_tab_by_name(tabs, model)
+    elif (model_tab.get("tab_content") or {}).get("url") != tab_url:
+        lark_im.update_chat_tabs(token, chat_id, [{
+            "tab_id": model_tab["tab_id"],
+            "tab_name": model,
+            "tab_type": "url",
+            "tab_content": {"url": tab_url},
+        }])
+        tabs = lark_im.list_chat_tabs(token, chat_id)
         model_tab = _find_tab_by_name(tabs, model)
 
-    updates = []
-    if tool_tab and tool_tab.get("tab_id") and (tool_tab.get("tab_content") or {}).get("url") != tab_url:
-        updates.append(
-            {
-                "tab_id": tool_tab["tab_id"],
-                "tab_name": tool,
-                "tab_type": "url",
-                "tab_content": {"url": tab_url},
-            }
-        )
-    if model_tab and model_tab.get("tab_id") and (model_tab.get("tab_content") or {}).get("url") != tab_url:
-        updates.append(
-            {
-                "tab_id": model_tab["tab_id"],
-                "tab_name": model,
-                "tab_type": "url",
-                "tab_content": {"url": tab_url},
-            }
-        )
-    if updates:
-        lark_im.update_chat_tabs(token, chat_id, updates)
-        tabs = lark_im.list_chat_tabs(token, chat_id)
-        tool_tab = _find_tab_by_name(tabs, tool)
-        model_tab = _find_tab_by_name(tabs, model)
-
+    # Order: message tab first, then model tab, then everything else
     message_id = ""
     ordered = []
     for tab in tabs:
@@ -875,9 +839,8 @@ def cmd_tabs_start(args):
             break
     if message_id:
         ordered.append(message_id)
-    for tab in (tool_tab, model_tab):
-        if tab and tab.get("tab_id") and tab.get("tab_id") not in ordered:
-            ordered.append(tab.get("tab_id"))
+    if model_tab and model_tab.get("tab_id") and model_tab["tab_id"] not in ordered:
+        ordered.append(model_tab["tab_id"])
     for tab in tabs:
         tid = tab.get("tab_id", "")
         if tid and tid not in ordered:
@@ -888,7 +851,6 @@ def cmd_tabs_start(args):
         {
             "ok": True,
             "chat_id": chat_id,
-            "tool_tab_id": (tool_tab or {}).get("tab_id", ""),
             "model_tab_id": (model_tab or {}).get("tab_id", ""),
             "tab_url": tab_url,
             "chat_tabs": sorted_tabs,
@@ -900,19 +862,16 @@ def cmd_tabs_start(args):
 def cmd_tabs_end(args):
     creds = _require_credentials()
     token = _require_token(creds)
-    chat_id, tool, model = _session_tool_model(args)
+    chat_id, _tool, _model = _session_tool_model(args)
     if not chat_id:
         raise RuntimeError("missing_chat_id")
 
     tabs = lark_im.list_chat_tabs(token, chat_id)
-    remove_ids = []
-    for tab in tabs:
-        if tab.get("tab_type") != "url":
-            continue
-        if tab.get("tab_name") in {tool, model}:
-            tid = tab.get("tab_id", "")
-            if tid:
-                remove_ids.append(tid)
+    # Remove all handoff-created tabs (identified by URL)
+    remove_ids = [
+        tab["tab_id"] for tab in tabs
+        if _is_handoff_tab(tab) and tab.get("tab_id")
+    ]
 
     if remove_ids:
         tabs = lark_im.delete_chat_tabs(token, chat_id, remove_ids)
@@ -1727,7 +1686,7 @@ def build_parser():
     s = sub.add_parser("tabs-start")
 
     s.add_argument("--session-model", required=True)
-    s.add_argument("--tab-url", default="https://example.com")
+    s.add_argument("--tab-url", default=None)
     s.set_defaults(func=cmd_tabs_start)
 
     s = sub.add_parser("tabs-end")
