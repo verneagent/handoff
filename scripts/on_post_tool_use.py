@@ -506,18 +506,26 @@ def _tool_summary(tool_name, tool_input):
 
 
 _WORKING_TITLES = [
-    (1, "Working..."),
-    (4, "Working hard..."),
-    (7, "Working really hard..."),
-    (10, "Working super hard..."),
+    (0, "Working..."),
+    (20, "Working hard..."),
+    (40, "Working really hard..."),
+    (60, "Working super hard..."),
+    (90, "Still going..."),
+    (120, "Deep in the zone..."),
+    (180, "This is getting intense..."),
+    (240, "Almost there... maybe..."),
+    (300, "Are we there yet?"),
+    (420, "This better be worth it..."),
+    (600, "Send coffee ☕"),
+    (900, "I might live here now."),
 ]
 
 
-def _working_title(counter):
-    """Return an escalating title based on tool call count."""
+def _working_title(elapsed_seconds):
+    """Return an escalating title based on elapsed time since card creation."""
     title = _WORKING_TITLES[0][1]
     for threshold, t in _WORKING_TITLES:
-        if counter >= threshold:
+        if elapsed_seconds >= threshold:
             title = t
     return title
 
@@ -526,9 +534,11 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
     """Send or update the 'Working...' card for filtered messages.
 
     Uses a file lock to prevent parallel hooks from each sending a new card.
-    Title escalates with the number of tool calls since the card was created.
+    Title escalates with elapsed time since card creation. Includes a Stop
+    button so the user can interrupt execution from Lark.
     """
     import fcntl
+    import time as _time
 
     token, chat_id = _get_token(session)
     if not token:
@@ -543,9 +553,12 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
     with open(lock_path, "w") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
-            existing_msg_id, counter = handoff_db.get_working_state(session_id)
-            title = _working_title(counter + 1)
-            card = lark_im.build_markdown_card(summary, title=title, color="grey")
+            existing_msg_id, created_at, _counter = handoff_db.get_working_state(session_id)
+            elapsed = int(_time.time()) - created_at if created_at else 0
+            title = _working_title(elapsed)
+            card = lark_im.build_working_card(
+                summary, title=title, color="grey", chat_id=chat_id,
+            )
 
             if existing_msg_id:
                 try:
@@ -607,6 +620,7 @@ def main():
 
     if should_filter:
         _send_or_update_working(session_id, session, tool_name, tool_input)
+        _check_stop_signal(session_id, session)
         return
 
     if is_failure:
@@ -632,6 +646,66 @@ def main():
         color = "grey"
 
     _send_card(session, title, body, color)
+    _check_stop_signal(session_id, session)
+
+
+def _stop_flag_path(session_id):
+    """Return the path to the stop flag file for a session."""
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    return os.path.join(tmp_dir, f"stop-{session_id}.flag")
+
+
+def _check_stop_signal(session_id, session):
+    """Check worker for a __stop__ signal and write a local flag file if found.
+
+    Does a quick non-blocking poll (timeout=0) to the worker. If a __stop__
+    reply is waiting, writes a flag file that PreToolUse hooks will check.
+    """
+    try:
+        import handoff_worker
+
+        chat_id = session.get("chat_id", "")
+        if not chat_id:
+            return
+
+        worker_url = handoff_config.load_worker_url()
+        if not worker_url:
+            return
+
+        api_key = handoff_config.load_api_key()
+        if not api_key:
+            return
+
+        # Quick non-blocking check via the /stop/ endpoint
+        stop_url = f"{worker_url}/stop/chat:{chat_id}"
+        import urllib.request
+        req = urllib.request.Request(
+            stop_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+
+        if data.get("stop"):
+            flag_path = _stop_flag_path(session_id)
+            os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+            with open(flag_path, "w") as f:
+                f.write("1")
+            # Update the working card to "Stopped"
+            token, card_chat_id = _get_token(session)
+            if token:
+                msg_id = handoff_db.get_working_message(session_id)
+                if msg_id:
+                    stopped_card = lark_im.build_working_card(
+                        "Stopped by user.", title="Stopped",
+                        color="red", show_stop=False,
+                    )
+                    try:
+                        lark_im.update_card_message(token, msg_id, stopped_card)
+                    except Exception:
+                        pass
+    except Exception as e:
+        warn(f"stop signal check failed: {e}")
 
 
 if __name__ == "__main__":

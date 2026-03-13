@@ -423,6 +423,23 @@ export default {
       return handleRegisterMessage(request, env);
     }
 
+    // Check and consume stop flag (set by Stop button card action)
+    if (request.method === "GET" && url.pathname.startsWith("/stop/")) {
+      const denied = checkApiKey(request, env);
+      if (denied) return denied;
+      const key = decodeURIComponent(url.pathname.split("/stop/")[1]);
+      if (!key) {
+        return Response.json({ stop: false });
+      }
+      const kvKey = `stop:${key}`;
+      const val = await env.LARK_REPLIES.get(kvKey);
+      if (val) {
+        await env.LARK_REPLIES.delete(kvKey);
+        return Response.json({ stop: true });
+      }
+      return Response.json({ stop: false });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -470,6 +487,40 @@ async function handleWebhook(request, env) {
 
   // Card action callback (v2: header.event_type === "card.action.trigger")
   if (header.event_type === "card.action.trigger") {
+    const action = event.action || {};
+    const value = action.value || {};
+    const { text: actionText } = extractActionInfo(action);
+
+    // --- Stop button: store flag in KV, return "Stopping..." card ---
+    if (actionText === "__stop__") {
+      const chatId = value.chat_id;
+      if (chatId) {
+        await env.LARK_REPLIES.put(`stop:chat:${chatId}`, "1", {
+          expirationTtl: 300,
+        });
+      }
+      return Response.json({
+        toast: { type: "warning", content: "Stopping..." },
+        card: {
+          type: "raw",
+          data: {
+            schema: "2.0",
+            config: { update_multi: true },
+            header: {
+              title: { tag: "plain_text", content: "Stopping..." },
+              template: "orange",
+            },
+            body: {
+              direction: "vertical",
+              elements: [
+                { tag: "markdown", content: "Stop requested. Waiting for current tool to finish..." },
+              ],
+            },
+          },
+        },
+      });
+    }
+
     const result = await handleCardAction(event, env);
 
     // Unauthorized sender — return error toast, keep card unchanged
@@ -479,8 +530,6 @@ async function handleWebhook(request, env) {
       });
     }
 
-    const action = event.action || {};
-    const value = action.value || {};
     const title = value.title || "Confirmed";
     const body = value.body || "";
 

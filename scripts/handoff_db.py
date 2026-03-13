@@ -551,6 +551,8 @@ def get_member_roles(session_id):
 def set_working_message(session_id, message_id):
     """Store the "Working..." card message_id and increment counter.
 
+    On INSERT, sets created_at to now. On UPDATE, preserves created_at
+    so elapsed time is measured from card creation, not last update.
     Returns the new counter value.
     """
     conn = _get_db()
@@ -559,8 +561,8 @@ def set_working_message(session_id, message_id):
             "INSERT INTO working_state (session_id, message_id, created_at, counter)"
             " VALUES (?, ?, ?, 1)"
             " ON CONFLICT(session_id) DO UPDATE"
-            " SET message_id = ?, created_at = ?, counter = counter + 1",
-            (session_id, message_id, int(time.time()), message_id, int(time.time())),
+            " SET message_id = ?, counter = counter + 1",
+            (session_id, message_id, int(time.time()), message_id),
         )
         conn.commit()
         row = conn.execute(
@@ -573,21 +575,21 @@ def set_working_message(session_id, message_id):
 
 
 def get_working_state(session_id):
-    """Return (message_id, counter) for a session, or (None, 0)."""
+    """Return (message_id, created_at, counter) for a session, or (None, 0, 0)."""
     conn = _get_db()
     try:
         row = conn.execute(
-            "SELECT message_id, counter FROM working_state WHERE session_id = ?",
+            "SELECT message_id, created_at, counter FROM working_state WHERE session_id = ?",
             (session_id,),
         ).fetchone()
-        return (row[0], row[1]) if row else (None, 0)
+        return (row[0], row[1], row[2]) if row else (None, 0, 0)
     finally:
         conn.close()
 
 
 def get_working_message(session_id):
     """Return the working card message_id for a session, or None."""
-    msg_id, _ = get_working_state(session_id)
+    msg_id, _, _ = get_working_state(session_id)
     return msg_id
 
 

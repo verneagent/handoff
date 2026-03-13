@@ -242,12 +242,24 @@ def create_handoff_group(
 
 
 def _reset_working_state():
-    """Clear the working card state so the next batch gets a fresh card."""
+    """Clear the working card state and stop flag so the next batch gets a fresh card."""
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         return
     handoff_db.clear_working_message(session_id)
     handoff_db.clear_autoapprove_message(session_id)
+    # Clear stop flag — user sent a new message, so stop is stale
+    _clear_stop_flag(session_id)
+
+
+def _clear_stop_flag(session_id):
+    """Remove the stop flag file for a session."""
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    flag_path = os.path.join(tmp_dir, f"stop-{session_id}.flag")
+    try:
+        os.unlink(flag_path)
+    except FileNotFoundError:
+        pass
 
 
 def send(token, chat_id, title, message, is_card, color, buttons=None,

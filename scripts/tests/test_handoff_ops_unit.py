@@ -293,5 +293,188 @@ class WorkspaceTagMatchTest(unittest.TestCase):
         self.assertFalse(self._match("", "workspace:foo"))
 
 
+class WorkingCardTest(unittest.TestCase):
+    """Tests for working card: time-based titles, stop flag, DB state."""
+
+    def setUp(self):
+        self._old_home = os.environ.get("HOME")
+        self._old_project = os.environ.get("HANDOFF_PROJECT_DIR")
+        self._old_session = os.environ.get("HANDOFF_SESSION_ID")
+        self._old_tool = os.environ.get("HANDOFF_SESSION_TOOL")
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.project_dir = os.path.join(self.tmp.name, "project")
+        os.makedirs(self.project_dir, exist_ok=True)
+
+        os.environ["HOME"] = self.tmp.name
+        os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
+        os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
+        os.environ.pop("HANDOFF_SESSION_ID", None)
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
+
+        self.db_path = handoff_db._db_path()
+        handoff_db._db_initialized.discard(self.db_path)
+        conn = handoff_db._get_db()
+        conn.close()
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        if self._old_project is None:
+            os.environ.pop("HANDOFF_PROJECT_DIR", None)
+        else:
+            os.environ["HANDOFF_PROJECT_DIR"] = self._old_project
+        if self._old_session is None:
+            os.environ.pop("HANDOFF_SESSION_ID", None)
+        else:
+            os.environ["HANDOFF_SESSION_ID"] = self._old_session
+        if self._old_tool is None:
+            os.environ.pop("HANDOFF_SESSION_TOOL", None)
+        else:
+            os.environ["HANDOFF_SESSION_TOOL"] = self._old_tool
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
+        self.tmp.cleanup()
+
+    def test_working_title_time_based(self):
+        """Title escalates based on elapsed seconds, not call count."""
+        import on_post_tool_use  # type: ignore
+        self.assertEqual(on_post_tool_use._working_title(0), "Working...")
+        self.assertEqual(on_post_tool_use._working_title(10), "Working...")
+        self.assertEqual(on_post_tool_use._working_title(20), "Working hard...")
+        self.assertEqual(on_post_tool_use._working_title(39), "Working hard...")
+        self.assertEqual(on_post_tool_use._working_title(40), "Working really hard...")
+        self.assertEqual(on_post_tool_use._working_title(60), "Working super hard...")
+        self.assertEqual(on_post_tool_use._working_title(90), "Still going...")
+        self.assertEqual(on_post_tool_use._working_title(120), "Deep in the zone...")
+        self.assertEqual(on_post_tool_use._working_title(180), "This is getting intense...")
+        self.assertEqual(on_post_tool_use._working_title(240), "Almost there... maybe...")
+        self.assertEqual(on_post_tool_use._working_title(300), "Are we there yet?")
+        self.assertEqual(on_post_tool_use._working_title(420), "This better be worth it...")
+        self.assertEqual(on_post_tool_use._working_title(600), "Send coffee ☕")
+        self.assertEqual(on_post_tool_use._working_title(900), "I might live here now.")
+        self.assertEqual(on_post_tool_use._working_title(9999), "I might live here now.")
+
+    def test_set_working_preserves_created_at_on_update(self):
+        """created_at should be set on INSERT but not changed on UPDATE."""
+        import time
+        handoff_db.set_working_message("s1", "msg-1")
+        _, created_at_1, counter_1 = handoff_db.get_working_state("s1")
+        self.assertEqual(counter_1, 1)
+        self.assertGreater(created_at_1, 0)
+
+        time.sleep(0.1)
+        handoff_db.set_working_message("s1", "msg-1")
+        _, created_at_2, counter_2 = handoff_db.get_working_state("s1")
+        self.assertEqual(counter_2, 2)
+        # created_at should NOT change on update
+        self.assertEqual(created_at_2, created_at_1)
+
+    def test_clear_working_resets_all(self):
+        """clear_working_message removes the entire row."""
+        handoff_db.set_working_message("s1", "msg-1")
+        handoff_db.clear_working_message("s1")
+        msg_id, created_at, counter = handoff_db.get_working_state("s1")
+        self.assertIsNone(msg_id)
+        self.assertEqual(created_at, 0)
+        self.assertEqual(counter, 0)
+
+    def test_get_working_message_compat(self):
+        """get_working_message still returns just the message_id."""
+        handoff_db.set_working_message("s1", "msg-abc")
+        self.assertEqual(handoff_db.get_working_message("s1"), "msg-abc")
+        self.assertIsNone(handoff_db.get_working_message("nonexistent"))
+
+    def test_build_working_card_has_stop_button(self):
+        """build_working_card includes a Stop button by default."""
+        import lark_im  # type: ignore
+        card = lark_im.build_working_card(
+            "test content", title="Working...", chat_id="oc_123",
+        )
+        self.assertEqual(card["schema"], "2.0")
+        elements = card["body"]["elements"]
+        self.assertEqual(len(elements), 2)  # markdown + action
+        action_el = elements[1]
+        self.assertEqual(action_el["tag"], "action")
+        btn = action_el["actions"][0]
+        self.assertEqual(btn["type"], "danger")
+        self.assertEqual(btn["value"]["action"], "__stop__")
+        self.assertEqual(btn["value"]["chat_id"], "oc_123")
+
+    def test_build_working_card_no_stop(self):
+        """build_working_card with show_stop=False has no button."""
+        import lark_im  # type: ignore
+        card = lark_im.build_working_card(
+            "stopped", title="Stopped", show_stop=False,
+        )
+        elements = card["body"]["elements"]
+        self.assertEqual(len(elements), 1)  # markdown only
+
+    def test_stop_flag_lifecycle(self):
+        """Stop flag file can be created and cleared."""
+        import on_post_tool_use  # type: ignore
+        import send_to_group as stg  # type: ignore
+
+        session_id = "test-stop-session"
+        tmp_dir = os.path.join(self.tmp.name, "handoff-tmp")
+        os.environ["HANDOFF_TMP_DIR"] = tmp_dir
+        try:
+            flag_path = on_post_tool_use._stop_flag_path(session_id)
+            self.assertIn(session_id, flag_path)
+
+            # Create flag
+            os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+            with open(flag_path, "w") as f:
+                f.write("1")
+            self.assertTrue(os.path.exists(flag_path))
+
+            # Clear flag
+            stg._clear_stop_flag(session_id)
+            self.assertFalse(os.path.exists(flag_path))
+
+            # Clear non-existent flag — should not raise
+            stg._clear_stop_flag(session_id)
+        finally:
+            os.environ.pop("HANDOFF_TMP_DIR", None)
+
+    def test_pre_tool_use_denies_on_stop_flag(self):
+        """PreToolUse hook denies tool call when stop flag exists."""
+        import subprocess
+
+        session_id = "test-pre-stop"
+        tmp_dir = os.path.join(self.tmp.name, "handoff-tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        flag_path = os.path.join(tmp_dir, f"stop-{session_id}.flag")
+        with open(flag_path, "w") as f:
+            f.write("1")
+
+        hook_input = json.dumps({
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo hello"},
+        })
+        env = os.environ.copy()
+        env["HANDOFF_SESSION_ID"] = session_id
+        env["HANDOFF_TMP_DIR"] = tmp_dir
+
+        result = subprocess.run(
+            ["python3", os.path.join(SCRIPT_DIR, "on_pre_tool_use_bash.py")],
+            input=hook_input, capture_output=True, text=True, env=env,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output["decision"], "deny")
+        self.assertIn("Stopped", output["reason"])
+
+        # Without flag — should approve
+        os.unlink(flag_path)
+        result = subprocess.run(
+            ["python3", os.path.join(SCRIPT_DIR, "on_pre_tool_use_bash.py")],
+            input=hook_input, capture_output=True, text=True, env=env,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output["decision"], "approve")
+
+
 if __name__ == "__main__":
     unittest.main()
