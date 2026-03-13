@@ -171,7 +171,7 @@ Tell the user: **"Plugin installed. Please exit and reopen OpenCode — plugins 
 
 Run the hook installer:
 ```bash
-python3 "$SKILL_SCRIPTS/install_hooks.py"
+python3 "scripts/install_hooks.py"
 ```
 
 This automatically:
@@ -227,7 +227,7 @@ lark_im.save_credentials(
 "
 ```
 
-Apply hooks by running: `python3 "$SKILL_SCRIPTS/install_hooks.py"`
+Apply hooks by running: `python3 "scripts/install_hooks.py"`
 
 Then re-run the preflight check to confirm everything passes.
 

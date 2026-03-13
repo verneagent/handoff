@@ -8,13 +8,7 @@ Hand off the CLI session to Lark so the user can continue interacting with Claud
 
 ## Skill Path
 
-Before running any script from this skill, resolve the scripts directory once:
-
-```bash
-SKILL_SCRIPTS=$(python3 -c "import os; p='.claude/skills/handoff/scripts'; print(p if os.path.isdir(p) else os.path.expanduser('~/.claude/skills/handoff/scripts'))")
-```
-
-Use `$SKILL_SCRIPTS` wherever you see `.claude/skills/handoff/scripts` in the commands below. For example: `python3 $SKILL_SCRIPTS/preflight.py`.
+All script paths in this document are relative to this skill's base directory. For example, `scripts/preflight.py` means `<base_directory>/scripts/preflight.py`. The base directory is provided by the host tool when loading this skill.
 
 ## Platform Detection
 
@@ -22,6 +16,7 @@ Before following this protocol, identify your runtime:
 
 - **Claude Code** — you are the `claude` CLI. Follow this document as written.
 - **OpenCode** — you are the `opencode` agent. Apply the **OpenCode Overrides** section below throughout, then follow the rest of this document.
+- **Codex** or any other tool — **STOP.** This skill only supports Claude Code and OpenCode. Tell the user: "Handoff is not supported on this platform. It requires Claude Code or OpenCode."
 
 ## OpenCode Overrides
 
@@ -178,7 +173,7 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 Run the preflight check to verify all requirements:
 
 ```bash
-python3 $SKILL_SCRIPTS/preflight.py
+python3 scripts/preflight.py
 ```
 
 ### For `/handoff check`
@@ -186,7 +181,7 @@ python3 $SKILL_SCRIPTS/preflight.py
 Run the detailed report and **stop**. Do NOT enter Handoff mode or run setup:
 
 ```bash
-python3 $SKILL_SCRIPTS/preflight.py --report
+python3 scripts/preflight.py --report
 ```
 
 Print the output to the user. This shows all configured values, hook status, and handoff data.
@@ -210,7 +205,7 @@ Run the standard preflight check. If it fails, tell the user to run `/handoff in
 ### Step 2: Discover external groups
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py discover-bot
+python3 scripts/handoff_ops.py discover-bot
 ```
 
 This returns groups where the bot is a member but has **no** `workspace:` tag (i.e., not created by handoff). The output includes `bot_open_id` and `open_id` (used during activation to populate the session table).
@@ -224,7 +219,7 @@ Parse the JSON output. Let N = number of groups.
 ### Step 3: Activate
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py activate --chat-id '<CHAT_ID>' --session-model '${session_model}' --sidecar
+python3 scripts/handoff_ops.py activate --chat-id '<CHAT_ID>' --session-model '${session_model}' --sidecar
 ```
 
 The `--sidecar` flag stores `sidecar_mode=1` in the session table so all scripts automatically know to apply bot interaction filtering.
@@ -232,7 +227,7 @@ The `--sidecar` flag stores `sidecar_mode=1` in the session table so all scripts
 ### Step 4: Enter sidecar-mode loop
 
 ```bash
-python3 $SKILL_SCRIPTS/start_and_wait.py --session-model '${session_model}'
+python3 scripts/start_and_wait.py --session-model '${session_model}'
 ```
 
 All sidecar-mode behavior is read from the session table: `sidecar_mode` (skip tabs/card, enable interaction filter), `bot_open_id` (@-mention matching), `operator_open_id` (sender filter). No `--sidecar` CLI flag needed — everything was stored during activation in Step 3.
@@ -250,7 +245,7 @@ All handoff commands work the same: "handback" to exit, heartbeats for long task
 Run the single entry-point script. It handles env resolution, session-check, group discovery, auto-selection, and activation in one shot:
 
 ```bash
-python3 $SKILL_SCRIPTS/enter_handoff.py --session-model '${session_model}'
+python3 scripts/enter_handoff.py --session-model '${session_model}'
 ```
 
 Pass `--mode no-ask` or `--mode new` when the user explicitly requests those modes.
@@ -269,10 +264,10 @@ Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name 
   - Build options from the `groups` array (each group: label = name `[active]`, description = chat_id).
   - Add a "Create new" option.
   - On selection:
-    - **"Create new"**: `python3 $SKILL_SCRIPTS/handoff_ops.py create-group --existing-names-json '<JSON>'` then `activate`.
+    - **"Create new"**: `python3 scripts/handoff_ops.py create-group --existing-names-json '<JSON>'` then `activate`.
     - **Occupied group**: run takeover then skip activate:
       ```bash
-      python3 $SKILL_SCRIPTS/handoff_ops.py takeover --chat-id '<CHAT_ID>' --session-model '${session_model}'
+      python3 scripts/handoff_ops.py takeover --chat-id '<CHAT_ID>' --session-model '${session_model}'
       ```
       If takeover returns `ok: false`, re-run `enter_handoff.py` and choose again.
 
@@ -281,7 +276,7 @@ Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name 
 Shortcut:
 
 ```
-python3 $SKILL_SCRIPTS/start_and_wait.py --session-model '${session_model}'
+python3 scripts/start_and_wait.py --session-model '${session_model}'
 ```
 
 This runs Steps E.1–E.4 automatically (silence → tabs → status card →
@@ -296,19 +291,19 @@ Only fall back to the manual sequence below for debugging.
 1. Silence terminal notifications (iTerm2 only):
 
 ```bash
-python3 $SKILL_SCRIPTS/iterm2_silence.py on
+python3 scripts/iterm2_silence.py on
 ```
 
 2. Ensure handoff tabs exist and are ordered (message first, then tool/model):
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py tabs-start --session-model '${session_model}'
+python3 scripts/handoff_ops.py tabs-start --session-model '${session_model}'
 ```
 
 3. Send the initial handoff card (auto-resolves tool from env, model from arg):
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py send-status-card start --session-model '${session_model}'
+python3 scripts/handoff_ops.py send-status-card start --session-model '${session_model}'
 ```
 
 4. Enter the main loop (see below).
@@ -329,7 +324,7 @@ Tool is read from `HANDOFF_SESSION_TOOL` env var; model from `--session-model` a
 This step runs **only once** at the start of the loop. All subsequent messages arrive via Step 4's `send_and_wait.py`.
 
 ```bash
-python3 $SKILL_SCRIPTS/wait_for_reply.py
+python3 scripts/wait_for_reply.py
 ```
 
 - Parse the JSON output. The script waits indefinitely for Claude models (timeout=0), or up to 540s for GPT models, then exits cleanly with `{"timeout": true}` if no reply arrives.
@@ -343,7 +338,7 @@ python3 $SKILL_SCRIPTS/wait_for_reply.py
 **Filter command**: If any reply text matches `filter verbose`, `filter important`, or `filter concise` (case-insensitive), update the message filter:
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py set-filter <level>
+python3 scripts/handoff_ops.py set-filter <level>
 ```
 
 Send a brief confirmation to Lark (e.g. "Filter set to **verbose**") and continue the loop (go back to waiting for the next message via `send_and_wait.py`).
@@ -356,7 +351,7 @@ Filter levels control PostToolUse forwarding to Lark:
 **Autoapprove command**: If any reply text matches `autoapprove on`, `autoapprove off`, `auto approve on/off`, or similar (case-insensitive), toggle autoapprove mode:
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py set-autoapprove <on|off>
+python3 scripts/handoff_ops.py set-autoapprove <on|off>
 ```
 
 Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
@@ -365,25 +360,25 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 
 - **Add guests**: Owner mentions users with intent to grant guest access. Examples: "add @jack @alice as guest", "@jack 和 @alice 可以和你对话", "let @bob talk to you". Extract `open_id` and `name` from the `mentions` array in the message, then:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py guest-add --guests-json '[{"open_id":"ou_xxx","name":"Jack"},{"open_id":"ou_yyy","name":"Alice"}]'
+  python3 scripts/handoff_ops.py guest-add --guests-json '[{"open_id":"ou_xxx","name":"Jack"},{"open_id":"ou_yyy","name":"Alice"}]'
   ```
   Send confirmation to Lark listing who was added.
 
 - **Add coowners**: Owner mentions users with intent to grant coowner access. Examples: "add @alice as coowner", "@alice 是 coowner", "make @bob a coowner". Extract `open_id` and `name` from mentions, then:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py guest-add --role coowner --guests-json '[{"open_id":"ou_xxx","name":"Alice"}]'
+  python3 scripts/handoff_ops.py guest-add --role coowner --guests-json '[{"open_id":"ou_xxx","name":"Alice"}]'
   ```
   Send confirmation to Lark listing who was added as coowner.
 
 - **Remove members**: Owner mentions users with intent to revoke access. Examples: "remove @jack", "@alice 不要了", "revoke @bob". Extract `open_id` from mentions, then:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py guest-remove --open-ids-json '["ou_xxx"]'
+  python3 scripts/handoff_ops.py guest-remove --open-ids-json '["ou_xxx"]'
   ```
   Send confirmation to Lark listing who was removed.
 
 - **List members**: Owner says "guests", "members", or "who has access". Run:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py guest-list
+  python3 scripts/handoff_ops.py guest-list
   ```
   Send the list to Lark (shows role for each member).
 
@@ -399,7 +394,7 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 - **Owner override**: Owner commands always take priority. If the owner says "stop", halt any guest-requested work immediately.
 - When replying to a guest, use `--mention-user-id` on `send_and_wait.py` to @-mention them (see also the general **@-mention targeting** rule in Important Notes):
   ```bash
-  python3 $SKILL_SCRIPTS/send_and_wait.py '<response>' --mention-user-id '<guest_open_id>'
+  python3 scripts/send_and_wait.py '<response>' --mention-user-id '<guest_open_id>'
   ```
 
 **Sidecar vs regular mode**: The ONLY difference between sidecar and regular mode is the bot-interaction filter (`filter_bot_interactions`). In sidecar mode, messages must be bot-directed (@-mention, reply to bot, or reaction/sticker). In regular mode, all messages from allowed senders are processed directly. Guest/coowner support works identically in both modes.
@@ -409,25 +404,25 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 **Normal handback** (no dissolve):
 - Preferred helper:
   ```bash
-  python3 $SKILL_SCRIPTS/end_and_cleanup.py --session-model '${session_model}'
+  python3 scripts/end_and_cleanup.py --session-model '${session_model}'
   ```
   This performs the card → tabs → deactivate → silence sequence automatically.
 - Manual steps (if the helper cannot run):
   - Send handback card to Lark (**before** deactivating, so session is still active):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py send-status-card end --session-model '${session_model}'
+    python3 scripts/handoff_ops.py send-status-card end --session-model '${session_model}'
     ```
   - Remove session tabs for this handoff (tool/model):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py tabs-end --session-model '${session_model}'
+    python3 scripts/handoff_ops.py tabs-end --session-model '${session_model}'
     ```
   - Deactivate handoff (remove session from local DB):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py deactivate
+    python3 scripts/handoff_ops.py deactivate
     ```
   - Restore terminal notifications:
     ```bash
-    python3 $SKILL_SCRIPTS/iterm2_silence.py off
+    python3 scripts/iterm2_silence.py off
     ```
   - Print "Handoff ended. Back to CLI." locally.
   - Stop the loop.
@@ -435,36 +430,36 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 **Handback with dissolve** (reply contains "dissolve"):
 - Preferred helper:
   ```bash
-  python3 $SKILL_SCRIPTS/end_and_cleanup.py --session-model '${session_model}' --dissolve --body 'Handing back to CLI. Dissolving chat group...'
+  python3 scripts/end_and_cleanup.py --session-model '${session_model}' --dissolve --body 'Handing back to CLI. Dissolving chat group...'
   ```
   `--body` controls the closing text, and `--dissolve` runs remove-user /
   dissolve-chat / cleanup-sessions after deactivation.
 - Manual steps:
   - Send handback card to Lark (**before** deactivating):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py send-status-card end --session-model '${session_model}' --body 'Handing back to CLI. Dissolving chat group...'
+    python3 scripts/handoff_ops.py send-status-card end --session-model '${session_model}' --body 'Handing back to CLI. Dissolving chat group...'
     ```
   - Remove session tabs for this handoff (tool/model):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py tabs-end --session-model '${session_model}'
+    python3 scripts/handoff_ops.py tabs-end --session-model '${session_model}'
     ```
   - Note the `chat_id` from the deactivate output for the dissolve step.
   - Deactivate handoff (remove session from local DB):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py deactivate
+    python3 scripts/handoff_ops.py deactivate
     ```
   - Remove the user from the group (so it disappears from their chat list):
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py remove-user --chat-id '<CHAT_ID>'
+    python3 scripts/handoff_ops.py remove-user --chat-id '<CHAT_ID>'
     ```
   - Dissolve the chat group and clean up any remaining sessions:
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py dissolve-chat --chat-id '<CHAT_ID>'
-    python3 $SKILL_SCRIPTS/handoff_ops.py cleanup-sessions --chat-id '<CHAT_ID>'
+    python3 scripts/handoff_ops.py dissolve-chat --chat-id '<CHAT_ID>'
+    python3 scripts/handoff_ops.py cleanup-sessions --chat-id '<CHAT_ID>'
     ```
   - Restore terminal notifications:
     ```bash
-    python3 $SKILL_SCRIPTS/iterm2_silence.py off
+    python3 scripts/iterm2_silence.py off
     ```
   - Print "Handoff ended. Chat group dissolved. Back to CLI." locally.
   - Stop the loop.
@@ -485,11 +480,11 @@ Treat the Lark reply as if the user typed it in the CLI. Do whatever work is nee
 
 1. **Try local lookup first** — checks the local `messages` table where `record_sent_message()` stores the original text/title of every bot-sent message (including card messages):
    ```bash
-   python3 $SKILL_SCRIPTS/handoff_ops.py parent-local --parent-id '<PARENT_ID>'
+   python3 scripts/handoff_ops.py parent-local --parent-id '<PARENT_ID>'
    ```
 2. **Fall back to Lark API** — if not found locally (parent is a message from another user, not the bot):
    ```bash
-   python3 $SKILL_SCRIPTS/handoff_ops.py parent-api --parent-id '<PARENT_ID>'
+   python3 scripts/handoff_ops.py parent-api --parent-id '<PARENT_ID>'
    ```
 
 Use the parent content to understand what "this", "that", or "it" refers to in the user's reply.
@@ -497,7 +492,7 @@ Use the parent content to understand what "this", "that", or "it" refers to in t
 **Image messages**: If a reply has an `image_key` (either `msg_type: "image"` or a post with inline images), download the image before processing. The `image_key` may contain multiple comma-separated keys for posts with several inline images — download each one:
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py download-image --image-key '<IMAGE_KEY>' --message-id '<MESSAGE_ID>'
+python3 scripts/handoff_ops.py download-image --image-key '<IMAGE_KEY>' --message-id '<MESSAGE_ID>'
 ```
 
 Then read the downloaded image file with the Read tool to see its contents. The user may send screenshots for you to analyze, Figma designs, error screenshots, etc.
@@ -505,7 +500,7 @@ Then read the downloaded image file with the Read tool to see its contents. The 
 **File messages**: If a reply has `msg_type: "file"` and a `file_key`, download the file before processing:
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py download-file --file-key '<FILE_KEY>' --message-id '<MESSAGE_ID>' --file-name '<FILE_NAME>'
+python3 scripts/handoff_ops.py download-file --file-key '<FILE_KEY>' --message-id '<MESSAGE_ID>' --file-name '<FILE_NAME>'
 ```
 
 Then read the downloaded file with the Read tool. The user may send code files, logs, config files, documents, etc.
@@ -513,7 +508,7 @@ Then read the downloaded file with the Read tool. The user may send code files, 
 **Merge-forward messages**: If a reply has `msg_type: "merge_forward"`, the user has forwarded a conversation thread from another chat. Fetch the child messages using the Lark API:
 
 ```bash
-python3 $SKILL_SCRIPTS/handoff_ops.py merge-forward --message-id '<MESSAGE_ID>'
+python3 scripts/handoff_ops.py merge-forward --message-id '<MESSAGE_ID>'
 ```
 
 Parse the JSON output — each line is one message from the forwarded thread. Present the conversation to the user as context. If any child messages contain images (`msg_type: "image"`), download them using the image download flow above with the child message's `message_id`. Summarize or analyze the thread as requested.
@@ -521,7 +516,7 @@ Parse the JSON output — each line is one message from the forwarded thread. Pr
 **Heartbeat**: If processing takes more than 60 seconds, send a brief status update to Lark so the user knows you're still working. Use "Working..." as the title and describe what you're doing in the body:
 
 ```bash
-python3 $SKILL_SCRIPTS/send_to_group.py '<what you are working on>' --color grey --title 'Working...' --card
+python3 scripts/send_to_group.py '<what you are working on>' --color grey --title 'Working...' --card
 ```
 
 Send additional heartbeats every ~60 seconds for long-running tasks.
@@ -531,7 +526,7 @@ Send additional heartbeats every ~60 seconds for long-running tasks.
 After completing the work, send your response to Lark using `send_and_wait.py`. This script sends the message **and blocks until the next user message arrives**. Its output is the next user message (same JSON format as `wait_for_reply.py`).
 
 ```bash
-python3 $SKILL_SCRIPTS/send_and_wait.py '<your response>'
+python3 scripts/send_and_wait.py '<your response>'
 ```
 
 **This call does NOT return "Sent." — it blocks and returns the next user message.** Parse the JSON output the same way as Step 1, then go to Step 2 with this new message.
@@ -578,19 +573,19 @@ Use `team_status.py` to read team/task state and send updates:
 
 ```bash
 # List active teams
-python3 $SKILL_SCRIPTS/team_status.py list
+python3 scripts/team_status.py list
 
 # Detailed status with progress bar
-python3 $SKILL_SCRIPTS/team_status.py status <team_id>
+python3 scripts/team_status.py status <team_id>
 
 # Format as Lark card content
-python3 $SKILL_SCRIPTS/team_status.py card <team_id>
+python3 scripts/team_status.py card <team_id>
 ```
 
 When the user asks for team status, run `team_status.py card <team_id>` and send the output as a card:
 
 ```bash
-python3 $SKILL_SCRIPTS/send_to_group.py "$(python3 $SKILL_SCRIPTS/team_status.py card <team_id>)" --title 'Team Progress'
+python3 scripts/send_to_group.py "$(python3 scripts/team_status.py card <team_id>)" --title 'Team Progress'
 ```
 
 ### Communicating with teammates
@@ -631,14 +626,14 @@ The hook automatically forwards these team events to Lark (regardless of message
   - **2 options (yes/no, approve/deny):** Use **button cards** (`build_card` with `buttons`). Quick tap, no submit needed.
   - **3+ options:** Use **form cards** (`build_form_card` with `selects`). Dropdown menus let the user pick cleanly. **Always list the options as text in the card body** so the user can see them without opening the dropdown:
     ```bash
-    python3 $SKILL_SCRIPTS/handoff_ops.py send-form-select --title '<TITLE>' --body '**Options:\n1. Option A — description\n2. Option B — description\n3. Option C — description' --field-name choice --placeholder 'Select...' --options-json '[["Option A","a"],["Option B","b"],["Option C","c"]]'
+    python3 scripts/handoff_ops.py send-form-select --title '<TITLE>' --body '**Options:\n1. Option A — description\n2. Option B — description\n3. Option C — description' --field-name choice --placeholder 'Select...' --options-json '[["Option A","a"],["Option B","b"],["Option C","c"]]'
     ```
     The callback arrives as `msg_type: "form_action"` with `text` containing the selected value (or JSON for multiple fields).
     Add `--cancel-label Cancel` to show a Cancel button below the form. If clicked, the callback arrives as `msg_type: "button_action"` with `text: "__cancel__"`.
   - **Fallback**: If the user replies with a text number instead of using the card, parse that too.
 - **Collecting text input** — When you need the user to type something (commit message, search query, etc.), use a **form card with input fields**:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py send-form-input --title '<TITLE>' --body '<PROMPT_TEXT>' --field-name '<FIELD_NAME>' --placeholder '<PLACEHOLDER>'
+  python3 scripts/handoff_ops.py send-form-input --title '<TITLE>' --body '<PROMPT_TEXT>' --field-name '<FIELD_NAME>' --placeholder '<PLACEHOLDER>'
   ```
   The callback arrives as `msg_type: "form_action"` with the typed value. The user can also just reply with a text message instead of using the card.
 - If a task requires multiple tool calls, do them all, then send one consolidated response to Lark (not one message per tool call).
@@ -650,8 +645,8 @@ The hook automatically forwards these team events to Lark (regardless of message
 - **"Send XX to me" = file attachment.** When the user asks to send something that is a file (e.g. "把 SKILL.md 发给我"), use `handoff_ops.py send-file` to upload and send it. Do NOT paste the file content as text.
 - **Sending images and files.** Always use the `handoff_ops.py` commands — they resolve the correct chat from `HANDOFF_SESSION_ID`:
   ```bash
-  python3 $SKILL_SCRIPTS/handoff_ops.py send-image /path/to/image.png
-  python3 $SKILL_SCRIPTS/handoff_ops.py send-file /path/to/file.pdf [--file-type pdf]
+  python3 scripts/handoff_ops.py send-image /path/to/image.png
+  python3 scripts/handoff_ops.py send-file /path/to/file.pdf [--file-type pdf]
   ```
   **NEVER** write ad-hoc Python to send images/files — `get_active_sessions()[0]` may pick the wrong group when multiple sessions exist.
 - **Commit hash links.** When mentioning commit hashes in Lark messages, format them as clickable links to the GitHub commit page: [`hash`](https://github.com/<org>/<repo>/commit/<hash>). Derive the org/repo from `git remote get-url origin`.

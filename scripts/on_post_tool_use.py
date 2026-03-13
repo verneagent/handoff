@@ -51,8 +51,6 @@ SKIP_COMMANDS = (
     # Env var prefixes used by handoff infrastructure calls
     "HANDOFF_PROJECT_DIR=",
     "HANDOFF_SESSION_ID=",
-    "SKILL_SCRIPTS=",
-    "$SKILL_SCRIPTS",
 )
 
 
