@@ -510,14 +510,14 @@ _WORKING_TITLES = [
     (20, "Working hard..."),
     (40, "Working really hard..."),
     (60, "Working super hard..."),
-    (90, "Still going..."),
-    (120, "Deep in the zone..."),
-    (180, "This is getting intense..."),
-    (240, "Almost there... maybe..."),
-    (300, "Are we there yet?"),
-    (420, "This better be worth it..."),
-    (600, "Send coffee ☕"),
-    (900, "I might live here now."),
+    (90, "Working incredibly hard..."),
+    (120, "Working unreasonably hard..."),
+    (180, "Working absurdly hard..."),
+    (240, "Working impossibly hard..."),
+    (300, "Working ridiculously hard..."),
+    (420, "Working cosmically hard..."),
+    (600, "Working transcendently hard..."),
+    (900, "Working beyond comprehension..."),
 ]
 
 
