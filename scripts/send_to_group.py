@@ -242,34 +242,52 @@ def create_handoff_group(
 
 
 def _reset_working_state():
-    """Update working card to 'Done', then clear state and stop flag."""
+    """Update working card to 'Done', then clear state and stop flag.
+
+    Acquires the same file lock used by on_post_tool_use._send_or_update_working()
+    to prevent a race where a concurrent PostToolUse hook reads the old msg_id,
+    then overwrites the "Done" card back to "Working..." after we clear the DB.
+    """
+    import fcntl
+
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         return
-    # Update working card to "Done" before clearing
-    msg_id = handoff_db.get_working_message(session_id)
-    if msg_id:
+
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    os.makedirs(tmp_dir, exist_ok=True)
+    lock_path = os.path.join(tmp_dir, f"working-{session_id}.lock")
+
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
-            credentials = handoff_config.load_credentials()
-            if credentials:
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"],
-                )
-                _, created_at, _ = handoff_db.get_working_state(session_id)
-                import time as _time
-                elapsed = int(_time.time()) - created_at if created_at else 0
-                if elapsed < 60:
-                    body = f"Completed in {elapsed}s"
-                else:
-                    mins = elapsed // 60
-                    secs = elapsed % 60
-                    body = f"Completed in {mins}m {secs}s"
-                done_card = lark_im.build_card("Done ✓", body=body, color="green")
-                lark_im.update_card_message(token, msg_id, done_card)
-        except Exception:
-            pass  # Non-critical — card may already be gone
-    handoff_db.clear_working_message(session_id)
-    handoff_db.clear_autoapprove_message(session_id)
+            # Update working card to "Done" before clearing
+            msg_id = handoff_db.get_working_message(session_id)
+            if msg_id:
+                try:
+                    credentials = handoff_config.load_credentials()
+                    if credentials:
+                        token = lark_im.get_tenant_token(
+                            credentials["app_id"], credentials["app_secret"],
+                        )
+                        _, created_at, _ = handoff_db.get_working_state(session_id)
+                        import time as _time
+                        elapsed = int(_time.time()) - created_at if created_at else 0
+                        if elapsed < 60:
+                            body = f"Completed in {elapsed}s"
+                        else:
+                            mins = elapsed // 60
+                            secs = elapsed % 60
+                            body = f"Completed in {mins}m {secs}s"
+                        done_card = lark_im.build_card("Done ✓", body=body, color="green")
+                        lark_im.update_card_message(token, msg_id, done_card)
+                except Exception:
+                    pass  # Non-critical — card may already be gone
+            handoff_db.clear_working_message(session_id)
+            handoff_db.clear_autoapprove_message(session_id)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
     # Clear stop flag — user sent a new message, so stop is stale
     _clear_stop_flag(session_id)
 
