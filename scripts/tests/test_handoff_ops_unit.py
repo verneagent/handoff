@@ -466,14 +466,13 @@ class WorkingCardTest(unittest.TestCase):
         self.assertEqual(output["decision"], "deny")
         self.assertIn("Stopped", output["reason"])
 
-        # Without flag — should approve
+        # Without flag — should exit with no decision (empty stdout)
         os.unlink(flag_path)
         result = subprocess.run(
             ["python3", os.path.join(SCRIPT_DIR, "on_pre_tool_use_bash.py")],
             input=hook_input, capture_output=True, text=True, env=env,
         )
-        output = json.loads(result.stdout)
-        self.assertEqual(output["decision"], "approve")
+        self.assertEqual(result.stdout.strip(), "")
 
 
 if __name__ == "__main__":

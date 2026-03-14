@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: stop flag check (all tools) + Bash auto-approve.
+"""PreToolUse hook: stop flag check for all tools.
 
-Runs on every tool call during handoff:
-1. Checks if the user pressed Stop in Lark — if so, denies the tool call.
-   First checks the local flag file (fast). If not found, polls the worker's
-   /stop/ endpoint to catch stop signals that PostToolUse hasn't seen yet
-   (e.g. when Claude is doing Read/Grep/Glob calls that don't trigger
-   PostToolUse).
-2. For Bash only: pre-approves commands EXCEPT those with
-   dangerouslyDisableSandbox=true, which are deferred to PermissionRequest
-   (and routed to Lark in handoff mode via permission_bridge.py).
-3. For non-Bash tools: exits with no decision (default handling).
+Runs on every tool call during handoff. Checks if the user pressed Stop
+in Lark — if so, denies the tool call. First checks the local flag file
+(fast). If not found, polls the worker's /stop/ endpoint to catch stop
+signals that PostToolUse hasn't seen yet (e.g. during Read/Grep/Glob
+calls that don't trigger PostToolUse).
 """
 
 import json
@@ -69,7 +64,6 @@ def _check_worker_stop():
             data = json.loads(resp.read())
 
         if data.get("stop"):
-            # Write local flag file so future checks are instant
             flag_path = _stop_flag_path()
             if flag_path:
                 os.makedirs(os.path.dirname(flag_path), exist_ok=True)
@@ -87,34 +81,28 @@ def main():
     except Exception:
         sys.exit(0)
 
-    # Check stop flag — user pressed Stop in Lark (applies to ALL tools)
+    # Only active during handoff sessions
     flag_path = _stop_flag_path()
-    if flag_path and os.path.exists(flag_path):
+    if not flag_path:
+        sys.exit(0)
+
+    # Check local stop flag (fast)
+    if os.path.exists(flag_path):
         print(json.dumps({
             "decision": "deny",
             "reason": "Stopped by user from Lark. The user pressed Stop on the working card.",
         }))
         return
 
-    # No local flag — check worker endpoint (catches stop signals that
-    # PostToolUse hasn't seen yet, e.g. during Read/Grep/Glob calls)
-    if flag_path and _check_worker_stop():
+    # Check worker endpoint (catches stop signals PostToolUse hasn't seen)
+    if _check_worker_stop():
         print(json.dumps({
             "decision": "deny",
             "reason": "Stopped by user from Lark. The user pressed Stop on the working card.",
         }))
         return
 
-    # Bash-specific: auto-approve unless dangerouslyDisableSandbox
-    tool_name = hook_input.get("tool_name", "")
-    if tool_name == "Bash":
-        tool_input = hook_input.get("tool_input", {})
-        if tool_input.get("dangerouslyDisableSandbox", False):
-            sys.exit(0)  # Defer to PermissionRequest (CLI prompt or Lark)
-        print('{"decision": "approve"}')
-        return
-
-    # Non-Bash tools: no decision (default handling)
+    # No stop signal — no decision (default handling)
     sys.exit(0)
 
 
