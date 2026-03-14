@@ -23,6 +23,18 @@
       ]
     }
   ],
+  "PreToolUse": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "d=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --absolute-git-dir 2>/dev/null); d=${d:-$CLAUDE_PROJECT_DIR/.git}; d=${d%/worktrees/*}; p=${d%/.git}/.claude/skills/handoff/scripts/on_pre_tool_use_bash.py; [ -f \"$p\" ] && python3 \"$p\"",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
   "PostToolUse": [
     {
       "matcher": "Edit|Write|Bash|TeamCreate|SendMessage|TeamDelete",

@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for Bash: suppress noisy pattern warnings + stop flag.
+"""PreToolUse hook: stop flag check (all tools) + Bash auto-approve.
 
-Claude Code raises PreToolUse-level permission dialogs for commands containing
-backticks, $() substitution, or newlines. These never reach PermissionRequest,
-so they bypass Lark in handoff mode and show as CLI prompts in normal mode.
-
-This hook:
+Runs on every tool call during handoff:
 1. Checks if the user pressed Stop in Lark — if so, denies the tool call.
-2. Pre-approves all Bash commands EXCEPT those with
+2. For Bash only: pre-approves commands EXCEPT those with
    dangerouslyDisableSandbox=true, which are deferred to PermissionRequest
    (and routed to Lark in handoff mode via permission_bridge.py).
+3. For non-Bash tools: exits with no decision (default handling).
 """
 
 import json
@@ -32,7 +29,7 @@ def main():
     except Exception:
         sys.exit(0)
 
-    # Check stop flag — user pressed Stop in Lark
+    # Check stop flag — user pressed Stop in Lark (applies to ALL tools)
     flag_path = _stop_flag_path()
     if flag_path and os.path.exists(flag_path):
         print(json.dumps({
@@ -41,11 +38,17 @@ def main():
         }))
         return
 
-    tool_input = hook_input.get("tool_input", {})
-    if tool_input.get("dangerouslyDisableSandbox", False):
-        sys.exit(0)  # Defer to PermissionRequest (CLI prompt or Lark)
+    # Bash-specific: auto-approve unless dangerouslyDisableSandbox
+    tool_name = hook_input.get("tool_name", "")
+    if tool_name == "Bash":
+        tool_input = hook_input.get("tool_input", {})
+        if tool_input.get("dangerouslyDisableSandbox", False):
+            sys.exit(0)  # Defer to PermissionRequest (CLI prompt or Lark)
+        print('{"decision": "approve"}')
+        return
 
-    print('{"decision": "approve"}')
+    # Non-Bash tools: no decision (default handling)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
