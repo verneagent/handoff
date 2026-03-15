@@ -1584,6 +1584,7 @@ def cmd_relay(args):
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "curl/8.0",
         },
     )
     try:
