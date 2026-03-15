@@ -1600,7 +1600,7 @@ def cmd_relay(args):
                     )
                     source_label = from_chat_name or from_workspace or "another session"
                     card = lark_im.build_card(
-                        f"📨 Relay from {source_label}",
+                        f"📨 Relay from 💬{source_label}",
                         body=args.message,
                         color="blue",
                     )

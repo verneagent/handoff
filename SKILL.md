@@ -410,7 +410,7 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 3. Confirm to the user: "Sent to [group name]"
 
 When receiving a relay (reply has `msg_type: "relay"`), present it to the user:
-- Show source: `from_chat_name` and `from_workspace`
+- Show source with emoji indicator: 💬`from_chat_name` (so group names don't blend into body text)
 - Show the message content
 - The user can respond — use `relay` to send a reply back to the source group
 
