@@ -108,6 +108,46 @@ class FilterBotInteractionsTest(unittest.TestCase):
         self.assertEqual(len(result), 0)
 
 
+class RelayFilterTest(unittest.TestCase):
+    """Relay messages (sender_type=relay) must pass through all filters."""
+
+    def test_relay_passes_operator_filter(self):
+        replies = [
+            {"text": "relayed info", "sender_type": "relay", "sender_id": "", "msg_type": "relay"},
+            {"text": "other", "sender_type": "user", "sender_id": "ou_other", "msg_type": "text"},
+        ]
+        result = wait_for_reply.filter_by_operator(replies, "ou_op")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "relayed info")
+
+    def test_relay_passes_allowed_senders_filter(self):
+        replies = [
+            {"text": "relayed", "sender_type": "relay", "sender_id": "", "msg_type": "relay"},
+            {"text": "stranger", "sender_type": "user", "sender_id": "ou_stranger", "msg_type": "text"},
+        ]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_guest": "guest"})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "relayed")
+
+    def test_relay_passes_bot_interactions_filter(self):
+        replies = [
+            {"text": "relayed", "sender_type": "relay", "sender_id": "", "msg_type": "relay"},
+            {"text": "random", "sender_type": "user", "sender_id": "ou_1", "msg_type": "text"},
+        ]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "relayed")
+
+    def test_relay_coexists_with_operator_messages(self):
+        replies = [
+            {"text": "from relay", "sender_type": "relay", "sender_id": "", "msg_type": "relay"},
+            {"text": "from op", "sender_type": "user", "sender_id": "ou_op", "msg_type": "text"},
+        ]
+        result = wait_for_reply.filter_by_operator(replies, "ou_op")
+        self.assertEqual(len(result), 2)
+
+
 class HandleResultTest(unittest.TestCase):
     @patch("wait_for_reply.handoff_db.set_session_last_checked")
     @patch("wait_for_reply.handoff_db.record_received_message")

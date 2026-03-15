@@ -423,6 +423,13 @@ export default {
       return handleRegisterMessage(request, env);
     }
 
+    // Relay a message to another handoff chat (cross-group messaging)
+    if (request.method === "POST" && url.pathname === "/relay") {
+      const denied = checkApiKey(request, env);
+      if (denied) return denied;
+      return handleRelay(request, env);
+    }
+
     // Check and consume stop flag (set by Stop button card action)
     if (request.method === "GET" && url.pathname.startsWith("/stop/")) {
       const denied = checkApiKey(request, env);
@@ -842,6 +849,53 @@ async function handleRegisterMessage(request, env) {
     expirationTtl: 604800,
   });
   return Response.json({ ok: true });
+}
+
+async function handleRelay(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return Response.json({ error: "bad request" }, { status: 400 });
+  }
+
+  const toChatId = data.to_chat_id;
+  const message = data.message || "";
+  const fromChatId = data.from_chat_id || "";
+  const fromChatName = data.from_chat_name || "";
+  const fromWorkspace = data.from_workspace || "";
+
+  if (!toChatId || !message) {
+    return Response.json(
+      { error: "missing to_chat_id or message" },
+      { status: 400 },
+    );
+  }
+
+  const reply = {
+    text: message,
+    msg_type: "relay",
+    from_chat_id: fromChatId,
+    from_chat_name: fromChatName,
+    from_workspace: fromWorkspace,
+    sender_type: "relay",
+    sender_id: "",
+    create_time: String(Date.now()),
+    message_id: "",
+  };
+
+  try {
+    await pushToDO(env, `chat:${toChatId}`, reply);
+    return Response.json({ ok: true });
+  } catch (e) {
+    if (isDOQuotaError(e)) {
+      return Response.json(
+        { ok: false, error: "do_quota_exhausted" },
+        { status: 503 },
+      );
+    }
+    return Response.json({ ok: false, error: e.message }, { status: 500 });
+  }
 }
 
 async function handleTakeover(env, url) {

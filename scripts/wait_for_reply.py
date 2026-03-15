@@ -33,11 +33,16 @@ def filter_by_operator(replies, operator_open_id):
     """Filter replies to only those from the operator (by open_id).
 
     Applied regardless of mode — ensures only the configured operator's
-    messages are processed.
+    messages are processed.  Relay messages (sender_type == "relay") always
+    pass through.
     """
     if not operator_open_id:
         return replies
-    return [r for r in replies if r.get("sender_id") == operator_open_id]
+    return [
+        r for r in replies
+        if r.get("sender_id") == operator_open_id
+        or r.get("sender_type") == "relay"
+    ]
 
 
 def filter_by_allowed_senders(replies, operator_open_id, member_roles):
@@ -54,6 +59,10 @@ def filter_by_allowed_senders(replies, operator_open_id, member_roles):
         return replies
     filtered = []
     for r in replies:
+        # Relay messages always pass through
+        if r.get("sender_type") == "relay":
+            filtered.append(r)
+            continue
         sid = r.get("sender_id", "")
         if sid not in allowed:
             continue
@@ -78,9 +87,9 @@ def filter_bot_interactions(replies, bot_open_id):
     """
     filtered = []
     for r in replies:
-        # Condition 3: reactions and stickers are always bot-directed
         msg_type = r.get("msg_type", "")
-        if msg_type in ("reaction", "sticker"):
+        # Relay and reaction/sticker messages always pass through
+        if msg_type in ("relay", "reaction", "sticker"):
             filtered.append(r)
             continue
 

@@ -1532,6 +1532,89 @@ def cmd_guest_list(args):
     })
 
 
+def cmd_relay(args):
+    """Send a relay message to another handoff chat via the Worker."""
+    import urllib.request
+
+    session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+    if not session_id:
+        _jprint({"ok": False, "error": "no active session"})
+        return 1
+
+    session = handoff_db.get_session(session_id)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
+
+    worker_url = handoff_config.load_worker_url()
+    api_key = handoff_config.load_api_key()
+    if not worker_url or not api_key:
+        _jprint({"ok": False, "error": "worker_url or api_key not configured"})
+        return 1
+
+    from_chat_id = session.get("chat_id", "")
+
+    # Resolve from_chat_name from lark_im group info
+    from_chat_name = ""
+    from_workspace = ""
+    try:
+        credentials = handoff_config.load_credentials()
+        if credentials:
+            token = lark_im.get_tenant_token(
+                credentials["app_id"], credentials["app_secret"]
+            )
+            info = lark_im.get_chat_info(token, from_chat_id)
+            from_chat_name = info.get("name", "")
+        from_workspace = lark_im.get_workspace_id()
+    except Exception:
+        pass
+
+    # Build relay payload
+    payload = json.dumps({
+        "to_chat_id": args.target_chat_id,
+        "message": args.message,
+        "from_chat_id": from_chat_id,
+        "from_chat_name": from_chat_name or f"session:{session_id[:8]}",
+        "from_workspace": from_workspace,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{worker_url}/relay",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if result.get("ok"):
+            # Also send a Lark card to the target group for visibility
+            try:
+                credentials = handoff_config.load_credentials()
+                if credentials:
+                    token = lark_im.get_tenant_token(
+                        credentials["app_id"], credentials["app_secret"]
+                    )
+                    source_label = from_chat_name or from_workspace or "another session"
+                    card = lark_im.build_card(
+                        f"📨 Relay from {source_label}",
+                        body=args.message,
+                        color="blue",
+                    )
+                    lark_im.send_message(token, args.target_chat_id, card)
+            except Exception:
+                pass  # Lark card is best-effort
+            _jprint({"ok": True, "to_chat_id": args.target_chat_id})
+        else:
+            _jprint({"ok": False, "error": result.get("error", "unknown")})
+            return 1
+    except Exception as e:
+        _jprint({"ok": False, "error": str(e)})
+        return 1
+
+
 def _chat_id_type(value):
     """Argparse type that validates chat_id format."""
     if not handoff_config.is_valid_chat_id(value):
@@ -1736,6 +1819,11 @@ def build_parser():
 
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
+
+    s = sub.add_parser("relay")
+    s.add_argument("--target-chat-id", required=True, type=_chat_id_type)
+    s.add_argument("--message", required=True)
+    s.set_defaults(func=cmd_relay)
 
     return p
 

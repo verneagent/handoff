@@ -399,6 +399,21 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 
 **Sidecar vs regular mode**: The ONLY difference between sidecar and regular mode is the bot-interaction filter (`filter_bot_interactions`). In sidecar mode, messages must be bot-directed (@-mention, reply to bot, or reaction/sticker). In regular mode, all messages from allowed senders are processed directly. Guest/coowner support works identically in both modes.
 
+**Relay command**: If the user asks to share/relay/forward information to another handoff group (e.g. "share this to group X", "relay to meadow", "把这个发到 X 群", "分享到 X"), detect the intent and execute:
+
+1. Find the target group by name (fuzzy match against `handoff_ops.py list-groups --scope all`). If ambiguous, present options via form card.
+2. Send the relay:
+   ```bash
+   python3 scripts/handoff_ops.py relay --target-chat-id '<CHAT_ID>' --message '<content>'
+   ```
+   This sends the message through the Worker (pushed to target DO for active sessions) AND sends a Lark card to the target group (visible even if no active session).
+3. Confirm to the user: "Sent to [group name]"
+
+When receiving a relay (reply has `msg_type: "relay"`), present it to the user:
+- Show source: `from_chat_name` and `from_workspace`
+- Show the message content
+- The user can respond — use `relay` to send a reply back to the source group
+
 **Handback command**: If any reply text matches **handback** or **hand back** (case-insensitive), exit Handoff mode. The text may optionally include the word **dissolve** (e.g. "handback dissolve", "hand back dissolve") to also dissolve (delete) the chat group after ending the handoff.
 
 **Normal handback** (no dissolve):
