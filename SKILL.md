@@ -416,6 +416,8 @@ When receiving a relay (reply has `msg_type: "relay"`), present it to the user:
 
 **Handback command**: If any reply text matches **handback** or **hand back** (case-insensitive), exit Handoff mode. The text may optionally include the word **dissolve** (e.g. "handback dissolve", "hand back dissolve") to also dissolve (delete) the chat group after ending the handoff.
 
+**CRITICAL: Never initiate handback on your own.** Only execute handback when the **user explicitly sends** "handback" or "hand back" as their message. Do NOT handback because: (a) you asked "handback?" and assume consent, (b) a task feels complete, (c) the conversation seems idle, or (d) you included "handback?" in your own response. The user must say it — your own messages do not count.
+
 **Normal handback** (no dissolve):
 - Preferred helper:
   ```bash
