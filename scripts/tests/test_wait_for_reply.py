@@ -13,6 +13,32 @@ sys.path.insert(0, SCRIPT_DIR)
 import wait_for_reply
 
 
+class FilterSelfBotTest(unittest.TestCase):
+    def test_filters_own_bot(self):
+        replies = [
+            {"text": "bot echo", "sender_type": "app", "sender_id": "ou_bot"},
+            {"text": "user msg", "sender_type": "user", "sender_id": "ou_1"},
+        ]
+        result = wait_for_reply.filter_self_bot(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "user msg")
+
+    def test_passes_other_bots(self):
+        replies = [
+            {"text": "other bot", "sender_type": "app", "sender_id": "ou_other_bot"},
+            {"text": "user msg", "sender_type": "user", "sender_id": "ou_1"},
+        ]
+        result = wait_for_reply.filter_self_bot(replies, "ou_bot")
+        self.assertEqual(len(result), 2)
+
+    def test_no_bot_id_passes_all(self):
+        replies = [
+            {"text": "bot msg", "sender_type": "app", "sender_id": "ou_bot"},
+        ]
+        result = wait_for_reply.filter_self_bot(replies, "")
+        self.assertEqual(len(result), 1)
+
+
 class FilterByOperatorTest(unittest.TestCase):
     def test_no_operator(self):
         """When no operator_open_id, all replies pass through."""

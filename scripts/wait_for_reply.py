@@ -29,6 +29,21 @@ def warn(msg):
     print(f"[handoff] {msg}", file=sys.stderr)
 
 
+def filter_self_bot(replies, bot_open_id):
+    """Filter out messages sent by the bot itself.
+
+    Server-side no longer filters bot messages so that other bots in the
+    group can be heard. This client-side filter removes only messages from
+    the bot's own open_id to prevent self-echo loops.
+    """
+    if not bot_open_id:
+        return replies
+    return [
+        r for r in replies
+        if not (r.get("sender_type") == "app" and r.get("sender_id") == bot_open_id)
+    ]
+
+
 def filter_by_operator(replies, operator_open_id):
     """Filter replies to only those from the operator (by open_id).
 
@@ -264,6 +279,8 @@ def main():
                     return
                 replies = result.get("replies", [])
                 if replies:
+                    replies = filter_self_bot(replies, bot_open_id)
+                if replies:
                     if member_roles:
                         replies = filter_by_allowed_senders(
                             replies, operator_open_id, member_roles)
@@ -314,6 +331,9 @@ def main():
                 # Ack processed replies via HTTP (WS already acks inline)
                 last_checked = replies[-1]["create_time"]
                 handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                replies = filter_self_bot(replies, bot_open_id)
+                if not replies:
+                    continue
                 if member_roles:
                     replies = filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)

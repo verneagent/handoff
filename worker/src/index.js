@@ -620,8 +620,9 @@ async function handleMessage(event, env) {
   const message = event.message || {};
   const sender = event.sender || {};
 
-  // Skip bot messages
-  if (sender.sender_type === "app") return;
+  // Bot messages are no longer filtered server-side. The client filters
+  // out its own bot's messages using bot_open_id from the session table.
+  // This allows other bots in the group to be heard by the handoff session.
 
   const rootId = message.root_id;
   const chatId = message.chat_id;
