@@ -322,6 +322,16 @@ def send(token, chat_id, title, message, is_card, color, buttons=None,
         # Use card for rich markdown formatting (lists, code, bold, etc.)
         card = lark_im.build_markdown_card(message, title=title)
         msg_id = lark_im.send_message(token, chat_id, card)
+    # Track heartbeat-style cards (--card, grey/no color, "Working" title) as
+    # working messages so _reset_working_state() can update them to "Done ✓"
+    # when the AI sends the real response via send_and_wait.py.
+    if is_card and color == "grey":
+        session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+        if session_id:
+            try:
+                handoff_db.set_working_message(session_id, msg_id)
+            except Exception:
+                pass
     # Record in local DB so we can resolve parent_id on replies
     try:
         handoff_db.record_sent_message(msg_id, text=message, title=title, chat_id=chat_id)
