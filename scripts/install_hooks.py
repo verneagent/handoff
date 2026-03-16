@@ -39,15 +39,26 @@ def main():
     skill_dir = os.path.dirname(script_dir)
 
     # 2. Scope detection
+    #    "project" = skill lives inside the project dir (not under $HOME/.claude/).
+    #    "global"  = skill lives under $HOME/.claude/skills/ (user-level install).
+    #    When project_dir IS $HOME (or a parent of ~/.claude/), the paths overlap
+    #    and we'd misdetect as "project". Resolve symlinks before comparing.
     project_hooks_path = os.path.join(
         project_dir, ".claude", "skills", "handoff", "hooks.json"
     )
-    if os.path.isfile(project_hooks_path):
+    global_hooks_path = os.path.join(skill_dir, "hooks.json")
+    home_hooks_path = os.path.join(
+        os.path.expanduser("~"), ".claude", "skills", "handoff", "hooks.json"
+    )
+    if (
+        os.path.isfile(project_hooks_path)
+        and os.path.realpath(project_hooks_path) != os.path.realpath(home_hooks_path)
+    ):
         scope = "project"
         hooks_path = project_hooks_path
     else:
         scope = "global"
-        hooks_path = os.path.join(skill_dir, "hooks.json")
+        hooks_path = global_hooks_path
 
     # 3. Read hooks.json
     if not os.path.isfile(hooks_path):
@@ -115,21 +126,25 @@ def main():
                 new_script_match = re.search(r"scripts/(\w+\.py)", new_cmd)
                 new_script_name = new_script_match.group(1) if new_script_match else None
 
-                # Check if any existing entry already has this script
+                # Check if any existing entry already has this script.
+                # If found with a DIFFERENT command, update it in place.
                 found = False
                 if new_script_name:
                     for existing_entry in existing_list:
                         for existing_hook in existing_entry.get("hooks", []):
                             existing_cmd = existing_hook.get("command", "")
                             if new_script_name in existing_cmd:
+                                if existing_cmd != new_cmd:
+                                    existing_hook["command"] = new_cmd
+                                    added.append(f"{event_type} (updated)")
+                                else:
+                                    skipped.append(event_type)
                                 found = True
                                 break
                         if found:
                             break
 
-                if found:
-                    skipped.append(event_type)
-                else:
+                if not found:
                     existing_list.append(new_entry)
                     added.append(event_type)
 
