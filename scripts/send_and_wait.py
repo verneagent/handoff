@@ -136,6 +136,8 @@ def main():
                 return
             replies = result.get("replies", [])
             if replies:
+                replies = wait_for_reply.filter_self_bot(replies, bot_open_id)
+            if replies:
                 if member_roles:
                     replies = wait_for_reply.filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)
@@ -174,6 +176,8 @@ def main():
             if replies:
                 last_checked = replies[-1]["create_time"]
                 handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                replies = wait_for_reply.filter_self_bot(replies, bot_open_id)
+            if replies:
                 if member_roles:
                     replies = wait_for_reply.filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)
