@@ -187,8 +187,29 @@ def fetch_replies_http(worker_url, chat_id, since):
     return result["replies"], result["takeover"], result["error"]
 
 
+def _ack_with_reaction(replies):
+    """Add a 'thinking' reaction to the last user message to show it was received."""
+    last = replies[-1] if replies else None
+    if not last or not last.get("message_id"):
+        return
+    # Only react to human/bot text messages, not reactions/stickers/relay
+    if last.get("msg_type") in ("reaction", "sticker", "relay"):
+        return
+    try:
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        lark_im.add_reaction(token, last["message_id"], "PEEK")
+    except Exception as e:
+        warn(f"failed to add thinking reaction: {e}")
+
+
 def handle_result(replies, worker_url, chat_id, session_id):
     """Update last_checked and output reply JSON."""
+    # Acknowledge receipt with a reaction so the user sees we're processing
+    _ack_with_reaction(replies)
+
     for r in replies:
         try:
             handoff_db.record_received_message(
