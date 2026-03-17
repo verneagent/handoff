@@ -139,6 +139,47 @@ def filter_bot_interactions(replies, bot_open_id):
     return filtered
 
 
+def _extract_system_warnings(replies, chat_id):
+    """Remove system_warning replies and send them as Lark cards.
+
+    Returns the remaining (non-warning) replies.
+    """
+    warnings = [r for r in replies if r.get("msg_type") == "system_warning"]
+    remaining = [r for r in replies if r.get("msg_type") != "system_warning"]
+    for w in warnings:
+        _send_system_warning(chat_id, w.get("text", "Unknown error"))
+    return remaining
+
+
+def _send_system_warning(chat_id, message):
+    """Send a warning card to Lark about a worker-side error."""
+    try:
+        import handoff_config
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        card = {
+            "header": {
+                "title": {"tag": "plain_text", "content": "Worker warning"},
+                "template": "orange",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"⚠️ {message}",
+                    },
+                },
+            ],
+        }
+        lark_im.send_message(token, chat_id, card)
+        warn(f"sent system warning card: {message}")
+    except Exception as e:
+        warn(f"failed to send system warning card: {e}")
+
+
 def _send_quota_warning(chat_id):
     """Send a warning card to the Lark chat about DO quota exhaustion.
 
@@ -342,6 +383,8 @@ def main():
                     return
                 replies = result.get("replies", [])
                 if replies:
+                    replies = _extract_system_warnings(replies, chat_id)
+                if replies:
                     replies = filter_self_bot(replies, bot_open_id)
                 if replies:
                     if member_roles:
@@ -394,6 +437,9 @@ def main():
                 # Ack processed replies via HTTP (WS already acks inline)
                 last_checked = replies[-1]["create_time"]
                 handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                replies = _extract_system_warnings(replies, chat_id)
+                if not replies:
+                    continue
                 replies = filter_self_bot(replies, bot_open_id)
                 if not replies:
                     continue

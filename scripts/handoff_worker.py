@@ -32,38 +32,6 @@ def is_do_quota_error(error_msg):
     return any(p in lower for p in _DO_QUOTA_PATTERNS)
 
 
-def _is_sandbox_proxy(proxy_url):
-    """Return True if proxy_url looks like a Claude Code sandbox proxy.
-
-    The sandbox proxy listens on a high ephemeral port (>50000) on localhost,
-    whereas user proxies like Surge use well-known ports (e.g. 6152).
-    """
-    if not proxy_url:
-        return False
-    try:
-        parsed = urllib.parse.urlparse(proxy_url)
-        host = parsed.hostname or ""
-        port = parsed.port or 0
-        return host in ("localhost", "127.0.0.1", "::1") and port > 50000
-    except Exception:
-        return False
-
-
-def _worker_curl_env():
-    """Return env dict for curl subprocesses that bypasses the sandbox proxy.
-
-    Claude Code's sandbox injects ``https_proxy=http://localhost:<PORT>``
-    that rejects CONNECT tunnels to Cloudflare Workers with 502.  We detect
-    and strip only the sandbox proxy (high-port localhost) while preserving
-    user proxies like Surge.
-    """
-    env = dict(os.environ)
-    for var in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
-        if _is_sandbox_proxy(env.get(var, "")):
-            del env[var]
-    return env
-
-
 def poll_worker(worker_url, chat_id, since=None, key=None):
     """Long-poll the worker for replies from a handoff group.
 
@@ -86,12 +54,10 @@ def poll_worker(worker_url, chat_id, since=None, key=None):
     if since:
         url += f"&since={since}"
     result = subprocess.run(
-        ["curl", "-s", "--noproxy", "*", "--max-time", "30",
-         *_worker_auth_headers(), url],
+        ["curl", "-s", "--max-time", "30", *_worker_auth_headers(), url],
         capture_output=True,
         text=True,
         timeout=35,
-        env=_worker_curl_env(),
     )
     if result.returncode != 0:
         return {
@@ -175,18 +141,9 @@ class _WebSocket:
         default_port = 443 if parsed.scheme == "https" else 80
         return parsed.hostname, parsed.port or default_port
 
-    def connect(self, timeout=10, bypass_sandbox_proxy=False):
-        """Perform WebSocket upgrade handshake (with HTTP proxy tunneling).
-
-        Args:
-            bypass_sandbox_proxy: Skip sandbox proxy (high-port localhost)
-                while still honoring user proxies like Surge.  The sandbox
-                proxy rejects CONNECT tunnels to *.workers.dev with 502.
-        """
+    def connect(self, timeout=10):
+        """Perform WebSocket upgrade handshake (with HTTP proxy tunneling)."""
         proxy_host, proxy_port = self._get_http_proxy(self.host)
-        if bypass_sandbox_proxy and proxy_host in ("localhost", "127.0.0.1", "::1"):
-            if proxy_port and proxy_port > 50000:
-                proxy_host, proxy_port = None, None
 
         if proxy_host:
             # HTTP CONNECT tunnel through the proxy
@@ -394,7 +351,7 @@ def poll_worker_ws(worker_url, chat_id, since=None, max_duration=None, key=None)
         headers["Authorization"] = f"Bearer {api_key}"
 
     ws = _WebSocket(ws_url, headers=headers)
-    ws.connect(timeout=10, bypass_sandbox_proxy=True)
+    ws.connect(timeout=10)
 
     ws_start = time.time()
     try:
@@ -457,7 +414,6 @@ def register_message(worker_url, message_id, chat_id):
             [
                 "curl",
                 "-s",
-                "--noproxy", "*",
                 "--max-time",
                 "5",
                 "-X",
@@ -472,7 +428,6 @@ def register_message(worker_url, message_id, chat_id):
             capture_output=True,
             text=True,
             timeout=10,
-            env=_worker_curl_env(),
         )
         if result.returncode != 0:
             print(
@@ -502,7 +457,6 @@ def send_takeover(worker_url, chat_id):
             [
                 "curl",
                 "-s",
-                "--noproxy", "*",
                 "--max-time",
                 "5",
                 "-X",
@@ -513,7 +467,6 @@ def send_takeover(worker_url, chat_id):
             capture_output=True,
             text=True,
             timeout=10,
-            env=_worker_curl_env(),
         )
         if result.returncode != 0:
             print(
@@ -547,7 +500,6 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
             [
                 "curl",
                 "-s",
-                "--noproxy", "*",
                 "--max-time",
                 "5",
                 "-X",
@@ -558,7 +510,6 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
             capture_output=True,
             text=True,
             timeout=10,
-            env=_worker_curl_env(),
         )
         if result.returncode != 0:
             print(
@@ -581,12 +532,10 @@ def check_do_quota_status(worker_url, chat_id):
     url = f"{worker_url}/status/{do_key}"
     try:
         result = subprocess.run(
-            ["curl", "-s", "--noproxy", "*", "--max-time", "5",
-             *_worker_auth_headers(), url],
+            ["curl", "-s", "--max-time", "5", *_worker_auth_headers(), url],
             capture_output=True,
             text=True,
             timeout=10,
-            env=_worker_curl_env(),
         )
         if result.returncode != 0:
             return None

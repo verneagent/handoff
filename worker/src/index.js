@@ -496,6 +496,23 @@ async function handleWebhook(request, env) {
       await env.LARK_REPLIES.put(`seen:${eventId}`, "1", { expirationTtl: 3600 });
     } catch (e) {
       console.error("KV idempotency check failed (non-fatal):", e.message || e);
+      // Surface the KV error in the chat's poll stream so the user sees it.
+      // We can't store a flag in KV (KV itself is broken), so push a system
+      // warning into the DO which the polling client will pick up.
+      const chatId =
+        (event.message || {}).chat_id ||
+        ((event.action || {}).value || {}).chat_id;
+      if (chatId) {
+        try {
+          await pushToDO(env, `chat:${chatId}`, {
+            text: `KV error: ${e.message || e}`,
+            msg_type: "system_warning",
+            create_time: String(Date.now()),
+          });
+        } catch (_) {
+          // Best effort — DO may also be down
+        }
+      }
     }
   }
 
