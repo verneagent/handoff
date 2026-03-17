@@ -135,43 +135,51 @@ class FilterBotInteractionsTest(unittest.TestCase):
 
 
 class OtherBotFilterTest(unittest.TestCase):
-    """Other bot messages (sender_type=app, different sender_id) must pass through all filters."""
+    """Other bots (sender_type=app) are treated like regular users — same filter rules apply."""
 
-    def test_other_bot_passes_operator_filter(self):
+    def test_other_bot_filtered_by_operator(self):
+        """Other bots are filtered out by operator filter (not in whitelist)."""
         replies = [
             {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins"},
-            {"text": "stranger", "sender_type": "user", "sender_id": "ou_other"},
+            {"text": "from op", "sender_type": "user", "sender_id": "ou_op"},
         ]
         result = wait_for_reply.filter_by_operator(replies, "ou_op")
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "jenkins msg")
+        self.assertEqual(result[0]["text"], "from op")
 
-    def test_other_bot_passes_allowed_senders_filter(self):
+    def test_other_bot_passes_as_guest(self):
+        """Other bots pass through when added as a guest."""
         replies = [
             {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins"},
             {"text": "stranger", "sender_type": "user", "sender_id": "ou_stranger"},
         ]
         result = wait_for_reply.filter_by_allowed_senders(
-            replies, "ou_op", {"ou_guest": "guest"})
+            replies, "ou_op", {"ou_jenkins": "guest"})
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["text"], "jenkins msg")
+        self.assertEqual(result[0]["privilege"], "guest")
 
-    def test_other_bot_passes_bot_interactions_filter(self):
+    @patch("wait_for_reply.handoff_db.is_bot_sent_message", return_value=False)
+    def test_other_bot_filtered_by_bot_interactions(self, _mock):
+        """Other bots are subject to bot-interaction filter in sidecar mode."""
         replies = [
             {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins", "msg_type": "text"},
-            {"text": "random", "sender_type": "user", "sender_id": "ou_1", "msg_type": "text"},
         ]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 0)
+
+    def test_other_bot_passes_bot_interactions_with_mention(self):
+        """Other bots pass bot-interaction filter when @-mentioning the bot."""
+        replies = [{
+            "text": "@bot jenkins msg",
+            "sender_type": "app",
+            "sender_id": "ou_jenkins",
+            "msg_type": "text",
+            "mentions": [{"id": "ou_bot", "key": "@bot"}],
+        }]
         result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["text"], "jenkins msg")
-
-    def test_other_bot_coexists_with_operator(self):
-        replies = [
-            {"text": "from jenkins", "sender_type": "app", "sender_id": "ou_jenkins"},
-            {"text": "from op", "sender_type": "user", "sender_id": "ou_op"},
-        ]
-        result = wait_for_reply.filter_by_operator(replies, "ou_op")
-        self.assertEqual(len(result), 2)
 
 
 class RelayFilterTest(unittest.TestCase):

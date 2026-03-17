@@ -48,16 +48,17 @@ def filter_by_operator(replies, operator_open_id):
     """Filter replies to only those from the operator (by open_id).
 
     Applied regardless of mode — ensures only the configured operator's
-    messages are processed.  Relay messages (sender_type == "relay") and
-    other bot messages (sender_type == "app") always pass through.
-    The bot's own messages are already removed by filter_self_bot upstream.
+    messages are processed.  Relay messages (sender_type == "relay") always
+    pass through.  Does not distinguish between human and bot senders —
+    only sender_id matters (the bot's own messages are already removed
+    by filter_self_bot upstream).
     """
     if not operator_open_id:
         return replies
     return [
         r for r in replies
         if r.get("sender_id") == operator_open_id
-        or r.get("sender_type") in ("relay", "app")
+        or r.get("sender_type") == "relay"
     ]
 
 
@@ -75,11 +76,12 @@ def filter_by_allowed_senders(replies, operator_open_id, member_roles):
         return replies
     filtered = []
     for r in replies:
-        # Relay and other bot messages always pass through.
-        # The bot's own messages are already removed by filter_self_bot upstream.
-        if r.get("sender_type") in ("relay", "app"):
+        # Relay messages always pass through.
+        if r.get("sender_type") == "relay":
             filtered.append(r)
             continue
+        # Check sender_id regardless of sender_type (human or bot).
+        # The bot's own messages are already removed by filter_self_bot upstream.
         sid = r.get("sender_id", "")
         if sid not in allowed:
             continue
@@ -105,9 +107,8 @@ def filter_bot_interactions(replies, bot_open_id):
     filtered = []
     for r in replies:
         msg_type = r.get("msg_type", "")
-        # Relay, reaction/sticker, and other bot messages always pass through.
-        # The bot's own messages are already removed by filter_self_bot upstream.
-        if msg_type in ("relay", "reaction", "sticker") or r.get("sender_type") == "app":
+        # Relay and reaction/sticker messages always pass through.
+        if msg_type in ("relay", "reaction", "sticker"):
             filtered.append(r)
             continue
 
