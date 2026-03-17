@@ -484,12 +484,19 @@ async function handleWebhook(request, env) {
     return new Response("Forbidden", { status: 403 });
   }
 
-  // Idempotency — skip duplicate deliveries (Lark retries on slow responses)
+  // Idempotency — skip duplicate deliveries (Lark retries on slow responses).
+  // Wrapped in try/catch: KV write failures (e.g. free-tier quota exceeded)
+  // must not crash the entire webhook handler — processing the event with a
+  // small chance of a duplicate is far better than dropping it entirely.
   const eventId = header.event_id;
   if (eventId) {
-    const seen = await env.LARK_REPLIES.get(`seen:${eventId}`);
-    if (seen) return new Response("ok", { status: 200 });
-    await env.LARK_REPLIES.put(`seen:${eventId}`, "1", { expirationTtl: 3600 });
+    try {
+      const seen = await env.LARK_REPLIES.get(`seen:${eventId}`);
+      if (seen) return new Response("ok", { status: 200 });
+      await env.LARK_REPLIES.put(`seen:${eventId}`, "1", { expirationTtl: 3600 });
+    } catch (e) {
+      console.error("KV idempotency check failed (non-fatal):", e.message || e);
+    }
   }
 
   // Card action callback (v2: header.event_type === "card.action.trigger")

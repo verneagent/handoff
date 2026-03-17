@@ -10,6 +10,46 @@ import urllib.error
 import urllib.request
 
 
+def _build_opener():
+    """Return a urllib opener that bypasses the Claude Code sandbox proxy.
+
+    Claude Code's sandbox injects ``https_proxy=http://localhost:<PORT>``
+    that rejects CONNECT tunnels to Cloudflare Workers with 502.  We detect
+    this sandbox proxy (distinct from user proxies like Surge) and bypass it
+    while preserving the user's own proxy configuration.
+
+    Detection heuristic: the sandbox proxy listens on a high ephemeral port
+    (>50000) on localhost, whereas user proxies like Surge use well-known
+    ports (e.g. 6152).  If the sandbox proxy is detected, we strip it and
+    let urllib fall through to either the user's proxy or direct connection.
+    """
+    import os as _os
+    proxy_url = (
+        _os.environ.get("https_proxy")
+        or _os.environ.get("HTTPS_PROXY")
+        or ""
+    )
+    if not proxy_url:
+        return urllib.request.build_opener()
+
+    # Parse to check if this looks like the sandbox proxy
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname or ""
+        port = parsed.port or 0
+        is_sandbox = host in ("localhost", "127.0.0.1", "::1") and port > 50000
+    except Exception:
+        is_sandbox = False
+
+    if is_sandbox:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener()
+
+
+_opener = _build_opener()
+
+
 def _poll_error_result(error):
     return {"replies": [], "takeover": False, "error": error}
 
@@ -40,7 +80,7 @@ def poll_worker_urllib(worker_url, chat_id, since="0", timeout=25, api_key="", k
     req = urllib.request.Request(url, headers=build_worker_headers(api_key))
 
     try:
-        with urllib.request.urlopen(req, timeout=int(timeout) + 5) as resp:
+        with _opener.open(req, timeout=int(timeout) + 5) as resp:
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return _poll_error_result(f"HTTP {e.code}")
@@ -82,7 +122,7 @@ def ack_worker_urllib(
         headers=build_worker_headers(api_key),
     )
     try:
-        with urllib.request.urlopen(req, timeout=int(timeout)) as resp:
+        with _opener.open(req, timeout=int(timeout)) as resp:
             resp.read()
         return True
     except Exception as e:
