@@ -200,7 +200,7 @@ def _ack_with_reaction(replies):
         if not creds:
             return
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
-        lark_im.add_reaction(token, last["message_id"], "PEEK")
+        lark_im.add_reaction(token, last["message_id"], "THINKING")
     except Exception as e:
         warn(f"failed to add thinking reaction: {e}")
 
