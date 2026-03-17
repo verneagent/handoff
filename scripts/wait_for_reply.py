@@ -111,6 +111,13 @@ def filter_bot_interactions(replies, bot_open_id):
         if msg_type in ("relay", "reaction", "sticker"):
             filtered.append(r)
             continue
+        # Other bots post informational content (build results, alerts etc.),
+        # not commands — skip the bot-interaction check for them.
+        # The bot's own messages are already removed by filter_self_bot upstream;
+        # access control is handled by filter_by_operator/filter_by_allowed_senders.
+        if r.get("sender_type") == "app":
+            filtered.append(r)
+            continue
 
         # Condition 1: @-mention
         mentions = r.get("mentions") or []
