@@ -203,6 +203,9 @@ def _ack_with_reaction(replies):
     # Only react to human/bot text messages, not reactions/stickers/relay
     if last.get("msg_type") in ("reaction", "sticker", "relay"):
         return
+    # Clear any previous reaction before adding a new one
+    clear_ack_reaction()
+
     try:
         creds = handoff_config.load_credentials()
         if not creds:
