@@ -48,15 +48,16 @@ def filter_by_operator(replies, operator_open_id):
     """Filter replies to only those from the operator (by open_id).
 
     Applied regardless of mode — ensures only the configured operator's
-    messages are processed.  Relay messages (sender_type == "relay") always
-    pass through.
+    messages are processed.  Relay messages (sender_type == "relay") and
+    other bot messages (sender_type == "app") always pass through.
+    The bot's own messages are already removed by filter_self_bot upstream.
     """
     if not operator_open_id:
         return replies
     return [
         r for r in replies
         if r.get("sender_id") == operator_open_id
-        or r.get("sender_type") == "relay"
+        or r.get("sender_type") in ("relay", "app")
     ]
 
 
@@ -74,8 +75,9 @@ def filter_by_allowed_senders(replies, operator_open_id, member_roles):
         return replies
     filtered = []
     for r in replies:
-        # Relay messages always pass through
-        if r.get("sender_type") == "relay":
+        # Relay and other bot messages always pass through.
+        # The bot's own messages are already removed by filter_self_bot upstream.
+        if r.get("sender_type") in ("relay", "app"):
             filtered.append(r)
             continue
         sid = r.get("sender_id", "")
@@ -103,8 +105,9 @@ def filter_bot_interactions(replies, bot_open_id):
     filtered = []
     for r in replies:
         msg_type = r.get("msg_type", "")
-        # Relay and reaction/sticker messages always pass through
-        if msg_type in ("relay", "reaction", "sticker"):
+        # Relay, reaction/sticker, and other bot messages always pass through.
+        # The bot's own messages are already removed by filter_self_bot upstream.
+        if msg_type in ("relay", "reaction", "sticker") or r.get("sender_type") == "app":
             filtered.append(r)
             continue
 

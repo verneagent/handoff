@@ -134,6 +134,46 @@ class FilterBotInteractionsTest(unittest.TestCase):
         self.assertEqual(len(result), 0)
 
 
+class OtherBotFilterTest(unittest.TestCase):
+    """Other bot messages (sender_type=app, different sender_id) must pass through all filters."""
+
+    def test_other_bot_passes_operator_filter(self):
+        replies = [
+            {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins"},
+            {"text": "stranger", "sender_type": "user", "sender_id": "ou_other"},
+        ]
+        result = wait_for_reply.filter_by_operator(replies, "ou_op")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "jenkins msg")
+
+    def test_other_bot_passes_allowed_senders_filter(self):
+        replies = [
+            {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins"},
+            {"text": "stranger", "sender_type": "user", "sender_id": "ou_stranger"},
+        ]
+        result = wait_for_reply.filter_by_allowed_senders(
+            replies, "ou_op", {"ou_guest": "guest"})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "jenkins msg")
+
+    def test_other_bot_passes_bot_interactions_filter(self):
+        replies = [
+            {"text": "jenkins msg", "sender_type": "app", "sender_id": "ou_jenkins", "msg_type": "text"},
+            {"text": "random", "sender_type": "user", "sender_id": "ou_1", "msg_type": "text"},
+        ]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "jenkins msg")
+
+    def test_other_bot_coexists_with_operator(self):
+        replies = [
+            {"text": "from jenkins", "sender_type": "app", "sender_id": "ou_jenkins"},
+            {"text": "from op", "sender_type": "user", "sender_id": "ou_op"},
+        ]
+        result = wait_for_reply.filter_by_operator(replies, "ou_op")
+        self.assertEqual(len(result), 2)
+
+
 class RelayFilterTest(unittest.TestCase):
     """Relay messages (sender_type=relay) must pass through all filters."""
 
