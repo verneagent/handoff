@@ -127,6 +127,49 @@ class FormatToolDescriptionTest(unittest.TestCase):
 # deny_and_exit
 # ---------------------------------------------------------------------------
 
+class IsHandoffInternalCommandTest(unittest.TestCase):
+    """Tests for is_handoff_internal_command()."""
+
+    def test_full_path_match(self):
+        self.assertTrue(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 /home/user/.claude/skills/handoff/scripts/wait_for_reply.py --timeout 0"}))
+
+    def test_skill_scripts_variable_match(self):
+        cmd = ('SKILL_SCRIPTS=$(python3 -c "import os; p=\'.claude/skills/handoff/scripts\'; '
+               'print(p if os.path.isdir(p) else os.path.expanduser(\'~/.claude/skills/handoff/scripts\'))") '
+               '&& python3 $SKILL_SCRIPTS/wait_for_reply.py --timeout 0')
+        self.assertTrue(permission_bridge.is_handoff_internal_command("Bash", {"command": cmd}))
+
+    def test_send_and_wait_matches(self):
+        self.assertTrue(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 $SKILL_SCRIPTS/send_and_wait.py 'hello' --timeout 0"}))
+
+    def test_handoff_ops_matches(self):
+        self.assertTrue(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 $SKILL_SCRIPTS/handoff_ops.py guest-list"}))
+
+    def test_non_handoff_command_rejected(self):
+        self.assertFalse(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "rm -rf /tmp/something"}))
+
+    def test_non_bash_tool_rejected(self):
+        self.assertFalse(permission_bridge.is_handoff_internal_command(
+            "Edit", {"file_path": "/handoff/scripts/wait_for_reply.py"}))
+
+    def test_script_name_without_handoff_path_rejected(self):
+        """Script name alone without handoff path context should not match."""
+        self.assertFalse(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 wait_for_reply.py"}))
+
+    def test_enter_handoff_matches(self):
+        self.assertTrue(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 $SKILL_SCRIPTS/enter_handoff.py --session-model opus"}))
+
+    def test_end_and_cleanup_matches(self):
+        self.assertTrue(permission_bridge.is_handoff_internal_command(
+            "Bash", {"command": "python3 $SKILL_SCRIPTS/end_and_cleanup.py --session-model opus"}))
+
+
 class DenyAndExitTest(unittest.TestCase):
     def test_deny_output_format(self):
         old_stdout = sys.stdout

@@ -20,10 +20,12 @@ import handoff_db
 import handoff_worker
 import lark_im
 from permission_core import (  # type: ignore
+    build_permission_body,
     prepare_permission_request,
     resolve_permission_context,
     run_permission_poll_loop,
     send_permission_denied_card,
+    update_permission_card,
 )
 
 # How long to wait for the user to respond (seconds).
@@ -206,29 +208,44 @@ def deny_and_exit(tool_name, reason=""):
 
 
 def is_handoff_internal_command(tool_name, tool_input):
-    """Check if this is a handoff internal command that should be auto-approved."""
+    """Check if this is a handoff internal command that should be auto-approved.
+
+    Matches both full paths (/handoff/scripts/foo.py) and $SKILL_SCRIPTS
+    variable patterns ($SKILL_SCRIPTS/foo.py) that the AI uses after
+    resolving the scripts directory.
+    """
     if tool_name != "Bash":
         return False
 
     cmd = tool_input.get("command", "")
 
-    # Handoff internal scripts that should never require user approval
-    internal_patterns = [
-        "/handoff/scripts/check_active.py",
-        "/handoff/scripts/handoff_ops.py check-active",
-        "/handoff/scripts/handoff_ops.py session-check",
-        "/handoff/scripts/wait_for_reply.py",
-        "/handoff/scripts/send_and_wait.py",
-        "/handoff/scripts/send_to_group.py",
-        "/handoff/scripts/iterm2_silence.py",
-        "/handoff/scripts/on_notification.py",
-        "/handoff/scripts/on_post_tool_use.py",
-        "/handoff/scripts/on_pre_compact.py",
-        "/handoff/scripts/on_session_start.py",
-        "/handoff/scripts/on_session_end.py",
+    # Handoff internal scripts that should never require user approval.
+    # Each script is matched by filename — works regardless of whether the
+    # command uses a full path or the $SKILL_SCRIPTS variable.
+    internal_scripts = [
+        "check_active.py",
+        "wait_for_reply.py",
+        "send_and_wait.py",
+        "send_to_group.py",
+        "iterm2_silence.py",
+        "enter_handoff.py",
+        "start_and_wait.py",
+        "end_and_cleanup.py",
+        "handoff_ops.py",
+        "team_status.py",
+        "on_notification.py",
+        "on_post_tool_use.py",
+        "on_pre_compact.py",
+        "on_session_start.py",
+        "on_session_end.py",
+        "preflight.py",
     ]
 
-    return any(pattern in cmd for pattern in internal_patterns)
+    # Check for SKILL_SCRIPTS variable usage or /handoff/scripts/ path
+    if "$SKILL_SCRIPTS/" in cmd or "/handoff/scripts/" in cmd:
+        return any(script in cmd for script in internal_scripts)
+
+    return False
 
 
 def main():
@@ -298,8 +315,9 @@ def main():
         sys.exit(0)
 
     # Generate nonce, ack stale replies, send card — all in one step.
+    perm_body = build_permission_body(tool_name, message)
     try:
-        nonce = prepare_permission_request(
+        nonce, perm_msg_id = prepare_permission_request(
             lark_im,
             token,
             chat_id,
@@ -318,7 +336,7 @@ def main():
         return
 
     def on_deny():
-        send_permission_denied_card(lark_im, token, chat_id, tool_name)
+        update_permission_card(lark_im, token, perm_msg_id, "deny", tool_name, perm_body)
 
     # Poll the nonce-keyed DO (not chat:{chatId}) for correlated replies only.
     decision, _ = run_permission_poll_loop(
@@ -340,6 +358,10 @@ def main():
     )
 
     _log(f"decision={decision}")
+
+    # Update the original permission card to reflect the decision
+    if decision in ("allow", "always"):
+        update_permission_card(lark_im, token, perm_msg_id, decision, tool_name, perm_body)
 
     # Return decision to Claude Code
     behavior = "allow" if decision in ("allow", "always") else "deny"

@@ -52,6 +52,7 @@ def send_permission_request_card(
     lark_im_mod, token, chat_id, tool_name, message, nonce=None,
     approver_ids=None,
 ):
+    """Send a permission request card. Returns message_id."""
     body = build_permission_body(tool_name, message)
     extra_value = {}
     if approver_ids:
@@ -65,7 +66,7 @@ def send_permission_request_card(
         nonce=nonce,
         extra_value=extra_value or None,
     )
-    lark_im_mod.send_message(token, chat_id, card)
+    return lark_im_mod.send_message(token, chat_id, card)
 
 
 def send_permission_denied_card(lark_im_mod, token, chat_id, tool_name):
@@ -75,6 +76,33 @@ def send_permission_denied_card(lark_im_mod, token, chat_id, tool_name):
         color="red",
     )
     lark_im_mod.send_message(token, chat_id, card)
+
+
+def update_permission_card(lark_im_mod, token, message_id, decision, tool_name, body):
+    """Update the permission request card to reflect the decision.
+
+    Changes the title and color based on whether the permission was
+    approved, always-approved, or denied.
+    """
+    if not message_id:
+        return
+    title_map = {
+        "allow": "Approved ✓",
+        "always": "Approved ✓ (always)",
+        "deny": "Denied ✗",
+    }
+    color_map = {
+        "allow": "green",
+        "always": "green",
+        "deny": "red",
+    }
+    title = title_map.get(decision, "Permission Request")
+    color = color_map.get(decision, "orange")
+    card = lark_im_mod.build_card(title, body=body, color=color)
+    try:
+        lark_im_mod.update_card_message(token, message_id, card)
+    except Exception:
+        pass  # Non-critical — card may have been deleted
 
 
 def generate_nonce():
@@ -98,7 +126,7 @@ def prepare_permission_request(
         log_fn: optional callable(msg) for debug logging.
 
     Returns:
-        nonce string on success.
+        (nonce, message_id) tuple on success.
 
     Raises:
         Exception if the card send fails (caller should handle).
@@ -117,7 +145,7 @@ def prepare_permission_request(
     if log_fn:
         log_fn("acked old replies")
 
-    send_permission_request_card(
+    msg_id = send_permission_request_card(
         lark_im_mod, token, chat_id, tool_name, message, nonce=nonce,
         approver_ids=approver_ids,
     )
@@ -125,7 +153,7 @@ def prepare_permission_request(
     if log_fn:
         log_fn("card sent")
 
-    return nonce
+    return nonce, msg_id
 
 
 def resolve_permission_context(lark_im_mod, session_id):

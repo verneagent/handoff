@@ -453,16 +453,66 @@ class PermissionCardsTest(unittest.TestCase):
             @staticmethod
             def send_message(token, chat_id, card):
                 calls["send"].append({"token": token, "chat_id": chat_id, "card": card})
+                return "msg_001"
 
-        permission_core.send_permission_request_card(
+            @staticmethod
+            def update_card_message(token, message_id, card):
+                calls.setdefault("update", []).append(
+                    {"token": token, "message_id": message_id, "card": card})
+
+        msg_id = permission_core.send_permission_request_card(
             FakeLark, "tok", "chat-9", "Bash", "do work"
         )
         permission_core.send_permission_denied_card(FakeLark, "tok", "chat-9", "Bash")
 
+        self.assertEqual(msg_id, "msg_001")
         self.assertEqual(len(calls["build"]), 2)
         self.assertEqual(calls["build"][0]["title"], "Permission Request")
         self.assertEqual(calls["build"][1]["title"], "Permission Denied")
         self.assertEqual(len(calls["send"]), 2)
+
+    def test_update_permission_card(self):
+        calls = {"build": [], "update": []}
+
+        class FakeLark:
+            @staticmethod
+            def build_card(title, body=None, color=None, **kwargs):
+                calls["build"].append({"title": title, "color": color})
+                return {"title": title}
+
+            @staticmethod
+            def update_card_message(token, message_id, card):
+                calls["update"].append(
+                    {"token": token, "message_id": message_id, "card": card})
+
+        permission_core.update_permission_card(
+            FakeLark, "tok", "msg_001", "allow", "Bash", "body")
+        self.assertEqual(calls["build"][0]["title"], "Approved ✓")
+        self.assertEqual(calls["build"][0]["color"], "green")
+        self.assertEqual(calls["update"][0]["message_id"], "msg_001")
+
+        permission_core.update_permission_card(
+            FakeLark, "tok", "msg_002", "always", "Bash", "body")
+        self.assertEqual(calls["build"][1]["title"], "Approved ✓ (always)")
+
+        permission_core.update_permission_card(
+            FakeLark, "tok", "msg_003", "deny", "Bash", "body")
+        self.assertEqual(calls["build"][2]["title"], "Denied ✗")
+        self.assertEqual(calls["build"][2]["color"], "red")
+
+    def test_update_permission_card_no_message_id(self):
+        """No-op when message_id is empty/None."""
+        calls = []
+
+        class FakeLark:
+            @staticmethod
+            def build_card(*a, **kw):
+                calls.append(1)
+                return {}
+
+        permission_core.update_permission_card(FakeLark, "tok", "", "allow", "Bash", "body")
+        permission_core.update_permission_card(FakeLark, "tok", None, "allow", "Bash", "body")
+        self.assertEqual(len(calls), 0)
 
 class ResolvePermissionContextTest(unittest.TestCase):
     """Tests for resolve_permission_context.
