@@ -159,14 +159,27 @@ class OtherBotFilterTest(unittest.TestCase):
         self.assertEqual(result[0]["text"], "jenkins msg")
         self.assertEqual(result[0]["privilege"], "guest")
 
-    def test_other_bot_passes_bot_interactions(self):
-        """Other bots pass bot-interaction filter (informational, not commands)."""
+    @patch("wait_for_reply.handoff_db.is_bot_sent_message", return_value=False)
+    def test_other_bot_filtered_by_bot_interactions(self, _mock):
+        """Other bots are filtered by bot-interaction filter (same rules as humans)."""
         replies = [
             {"text": "jenkins build #42 passed", "sender_type": "app", "sender_id": "ou_jenkins", "msg_type": "text"},
         ]
         result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
+        self.assertEqual(len(result), 0)
+
+    def test_other_bot_passes_bot_interactions_with_mention(self):
+        """Other bots pass bot-interaction filter when @-mentioning the bot."""
+        replies = [{
+            "text": "@bot jenkins result",
+            "sender_type": "app",
+            "sender_id": "ou_jenkins",
+            "msg_type": "text",
+            "mentions": [{"id": "ou_bot", "key": "@bot"}],
+        }]
+        result = wait_for_reply.filter_bot_interactions(replies, "ou_bot")
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "jenkins build #42 passed")
+        self.assertEqual(result[0]["text"], "jenkins result")
 
 
 class RelayFilterTest(unittest.TestCase):
