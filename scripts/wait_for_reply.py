@@ -187,8 +187,16 @@ def fetch_replies_http(worker_url, chat_id, since):
     return result["replies"], result["takeover"], result["error"]
 
 
+_ACK_REACTION_FILE = os.path.join(
+    f"/private/tmp/claude-{os.getuid()}", "handoff-ack-reaction.json"
+)
+
+
 def _ack_with_reaction(replies):
-    """Add a 'thinking' reaction to the last user message to show it was received."""
+    """Add a 'thinking' reaction to the last user message to show it was received.
+
+    Saves the reaction info to a temp file so send scripts can remove it later.
+    """
     last = replies[-1] if replies else None
     if not last or not last.get("message_id"):
         return
@@ -200,9 +208,36 @@ def _ack_with_reaction(replies):
         if not creds:
             return
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
-        lark_im.add_reaction(token, last["message_id"], "THINKING")
+        reaction_id = lark_im.add_reaction(token, last["message_id"], "THINKING")
+        # Save reaction info for removal by send scripts
+        with open(_ACK_REACTION_FILE, "w") as f:
+            json.dump({
+                "message_id": last["message_id"],
+                "reaction_id": reaction_id,
+            }, f)
     except Exception as e:
         warn(f"failed to add thinking reaction: {e}")
+
+
+def clear_ack_reaction():
+    """Remove the THINKING reaction added by _ack_with_reaction.
+
+    Called by send scripts before sending a response, to signal
+    that processing is complete. Fails silently.
+    """
+    try:
+        if not os.path.isfile(_ACK_REACTION_FILE):
+            return
+        with open(_ACK_REACTION_FILE) as f:
+            data = json.load(f)
+        os.unlink(_ACK_REACTION_FILE)
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        lark_im.remove_reaction(token, data["message_id"], data["reaction_id"])
+    except Exception as e:
+        warn(f"failed to clear thinking reaction: {e}")
 
 
 def handle_result(replies, worker_url, chat_id, session_id):

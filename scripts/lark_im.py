@@ -1216,6 +1216,25 @@ def add_reaction(token, message_id, emoji_type):
     return data.get("data", {}).get("reaction_id", "")
 
 
+def remove_reaction(token, message_id, reaction_id):
+    """Remove a reaction from a message.
+
+    Args:
+        token: Tenant access token.
+        message_id: The message ID the reaction is on.
+        reaction_id: The reaction_id returned by add_reaction.
+    """
+    req = urllib.request.Request(
+        f"{BASE_URL}/im/v1/messages/{message_id}/reactions/{reaction_id}",
+        method="DELETE",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    if data.get("code") != 0:
+        raise RuntimeError(f"Failed to remove reaction: {data}")
+
+
 def get_message(token, message_id):
     """Fetch a single message by its ID. Returns the message item dict."""
     req = urllib.request.Request(

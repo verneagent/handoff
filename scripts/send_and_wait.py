@@ -93,6 +93,9 @@ def main():
     if not mention_user_id and session_for_send.get("sidecar_mode"):
         mention_user_id = session_for_send.get("operator_open_id") or None
 
+    # Clear the "thinking" reaction before sending the response
+    wait_for_reply.clear_ack_reaction()
+
     send_to_group.send(
         token,
         chat_id,

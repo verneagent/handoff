@@ -389,6 +389,13 @@ def main():
     token, chat_id = ctx["token"], ctx["chat_id"]
     title = args.title or ""
 
+    # Clear the "thinking" reaction before sending
+    try:
+        import wait_for_reply
+        wait_for_reply.clear_ack_reaction()
+    except Exception:
+        pass
+
     send(
         token,
         chat_id,
