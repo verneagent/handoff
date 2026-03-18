@@ -589,6 +589,12 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
             try:
                 msg_id = lark_im.send_message(token, chat_id, card)
                 handoff_db.set_working_message(session_id, msg_id)
+                # Clear the THINKING reaction — user can now see work is happening
+                try:
+                    import wait_for_reply
+                    wait_for_reply.clear_ack_reaction()
+                except Exception:
+                    pass
             except Exception as e:
                 warn(f"failed to send working card: {e}")
         finally:

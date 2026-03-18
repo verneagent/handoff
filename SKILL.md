@@ -136,6 +136,7 @@ After auto-compaction, the full SKILL.md may be summarized away. These essential
 4. **Timeout handling**: Scripts default to **540s for GPT models, 0 (infinite) for everything else** and output `{"timeout": true}`. **NEVER send status messages on timeout.** Immediately re-invoke the same script silently. For `send_and_wait.py` timeout, message was already sent — call `wait_for_reply.py` to resume waiting.
 5. **Handback**: If user sends "handback", exit cleanly (send goodbye → deactivate → restore notifications)
 6. **Takeover**: If poll output has `"takeover": true`, another session has claimed this chat. Exit silently — run `handoff_ops.py deactivate`, `handoff_ops.py tabs-end --session-model '${session_model}'`, `iterm2_silence.py off`. Do NOT send a Lark message (the new session handles that). Print "Handoff taken over by another session." locally.
+7. **Built-in commands**: Before processing a message, check for these commands: `filter verbose/important/concise` (set message filter), `autoapprove on/off` (toggle auto-approve — run `handoff_ops.py set-autoapprove <on|off>`), `handback` (exit). These are handoff-internal commands, not tasks to execute.
 
 If you find yourself outside the loop during active handoff, re-read this file and resume from the Main Loop section.
 
@@ -416,7 +417,7 @@ When receiving a relay (reply has `msg_type: "relay"`), present it to the user:
 
 **Handback command**: If any reply text matches **handback** or **hand back** (case-insensitive), exit Handoff mode. The text may optionally include the word **dissolve** (e.g. "handback dissolve", "hand back dissolve") to also dissolve (delete) the chat group after ending the handoff.
 
-**CRITICAL: Never initiate handback on your own.** Only execute handback when the **user explicitly sends** "handback" or "hand back" as their message. Do NOT handback because: (a) you asked "handback?" and assume consent, (b) a task feels complete, (c) the conversation seems idle, or (d) you included "handback?" in your own response. The user must say it — your own messages do not count.
+**CRITICAL: Never initiate handback on your own.** Only execute handback when the **user explicitly sends** "handback" or "hand back" as their message. Do NOT handback because: (a) a task feels complete, (b) the conversation seems idle, or (c) you included "handback?" in your own response and assume consent. The user must say it — your own messages do not count. **Don't casually suggest handback either.** A completed task or a lull is not a reason to say "want to hand back?". Only mention handback if there is a genuine, specific reason the user would benefit from returning to CLI (e.g., a tool limitation that truly blocks progress). The user knows how to end the session.
 
 **Normal handback** (no dissolve):
 - Preferred helper:
