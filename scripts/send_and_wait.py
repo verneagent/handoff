@@ -93,6 +93,9 @@ def main():
     if not mention_user_id and session_for_send.get("sidecar_mode"):
         mention_user_id = session_for_send.get("operator_open_id") or None
 
+    # Clear the "thinking" reaction before sending the response
+    wait_for_reply.clear_ack_reaction()
+
     send_to_group.send(
         token,
         chat_id,
@@ -136,6 +139,8 @@ def main():
                 return
             replies = result.get("replies", [])
             if replies:
+                replies = wait_for_reply.filter_self_bot(replies, bot_open_id)
+            if replies:
                 if member_roles:
                     replies = wait_for_reply.filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)
@@ -174,6 +179,8 @@ def main():
             if replies:
                 last_checked = replies[-1]["create_time"]
                 handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                replies = wait_for_reply.filter_self_bot(replies, bot_open_id)
+            if replies:
                 if member_roles:
                     replies = wait_for_reply.filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)

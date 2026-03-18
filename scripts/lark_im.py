@@ -190,6 +190,39 @@ def build_markdown_card(content, title="", color=""):
     return card
 
 
+def build_working_card(content, title="", color="grey", chat_id="",
+                       show_stop=True):
+    """Build a Card V2 markdown card with an optional Stop button.
+
+    Used for the "Working..." card during tool execution. The Stop button
+    sends a ``__stop__`` card action that the worker stores as a flag.
+    """
+    elements = [{"tag": "markdown", "content": content}]
+    if show_stop:
+        stop_value = {"action": "__stop__", "chat_id": chat_id}
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "Stop"},
+                "type": "default",
+                "value": stop_value,
+            }],
+        })
+    card = {
+        "schema": "2.0",
+        "config": {"update_multi": True},
+        "body": {"direction": "vertical", "elements": elements},
+    }
+    if title:
+        card["header"] = {
+            "title": {"tag": "plain_text", "content": title},
+        }
+        if color:
+            card["header"]["template"] = color
+    return card
+
+
 def build_form_card(
     title,
     body="",
@@ -1184,6 +1217,25 @@ def add_reaction(token, message_id, emoji_type):
         raise RuntimeError(f"Failed to add reaction: {data}")
 
     return data.get("data", {}).get("reaction_id", "")
+
+
+def remove_reaction(token, message_id, reaction_id):
+    """Remove a reaction from a message.
+
+    Args:
+        token: Tenant access token.
+        message_id: The message ID the reaction is on.
+        reaction_id: The reaction_id returned by add_reaction.
+    """
+    req = urllib.request.Request(
+        f"{BASE_URL}/im/v1/messages/{message_id}/reactions/{reaction_id}",
+        method="DELETE",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    if data.get("code") != 0:
+        raise RuntimeError(f"Failed to remove reaction: {data}")
 
 
 def get_message(token, message_id):

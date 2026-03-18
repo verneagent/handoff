@@ -423,6 +423,30 @@ export default {
       return handleRegisterMessage(request, env);
     }
 
+    // Relay a message to another handoff chat (cross-group messaging)
+    if (request.method === "POST" && url.pathname === "/relay") {
+      const denied = checkApiKey(request, env);
+      if (denied) return denied;
+      return handleRelay(request, env);
+    }
+
+    // Check and consume stop flag (set by Stop button card action)
+    if (request.method === "GET" && url.pathname.startsWith("/stop/")) {
+      const denied = checkApiKey(request, env);
+      if (denied) return denied;
+      const key = decodeURIComponent(url.pathname.split("/stop/")[1]);
+      if (!key) {
+        return Response.json({ stop: false });
+      }
+      const kvKey = `stop:${key}`;
+      const val = await env.LARK_REPLIES.get(kvKey);
+      if (val) {
+        await env.LARK_REPLIES.delete(kvKey);
+        return Response.json({ stop: true });
+      }
+      return Response.json({ stop: false });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -470,6 +494,50 @@ async function handleWebhook(request, env) {
 
   // Card action callback (v2: header.event_type === "card.action.trigger")
   if (header.event_type === "card.action.trigger") {
+    const action = event.action || {};
+    const value = action.value || {};
+    const { text: actionText } = extractActionInfo(action);
+
+    // --- Stop button: store flag in KV, return "Stopping..." card ---
+    if (actionText === "__stop__") {
+      // Authorization: only owner and coowners can stop
+      const approvers = value.approvers;
+      if (Array.isArray(approvers) && approvers.length > 0) {
+        const operatorId = (event.operator || {}).open_id || "";
+        if (!approvers.includes(operatorId)) {
+          return Response.json({
+            toast: { type: "error", content: "Only the owner or coowners can stop" },
+          });
+        }
+      }
+      const chatId = value.chat_id;
+      if (chatId) {
+        await env.LARK_REPLIES.put(`stop:chat:${chatId}`, "1", {
+          expirationTtl: 300,
+        });
+      }
+      return Response.json({
+        toast: { type: "warning", content: "Stopping..." },
+        card: {
+          type: "raw",
+          data: {
+            schema: "2.0",
+            config: { update_multi: true },
+            header: {
+              title: { tag: "plain_text", content: "Stopping..." },
+              template: "orange",
+            },
+            body: {
+              direction: "vertical",
+              elements: [
+                { tag: "markdown", content: "Stop requested. Waiting for current tool to finish..." },
+              ],
+            },
+          },
+        },
+      });
+    }
+
     const result = await handleCardAction(event, env);
 
     // Unauthorized sender — return error toast, keep card unchanged
@@ -479,8 +547,6 @@ async function handleWebhook(request, env) {
       });
     }
 
-    const action = event.action || {};
-    const value = action.value || {};
     const title = value.title || "Confirmed";
     const body = value.body || "";
 
@@ -554,8 +620,9 @@ async function handleMessage(event, env) {
   const message = event.message || {};
   const sender = event.sender || {};
 
-  // Skip bot messages
-  if (sender.sender_type === "app") return;
+  // Bot messages are no longer filtered server-side. The client filters
+  // out its own bot's messages using bot_open_id from the session table.
+  // This allows other bots in the group to be heard by the handoff session.
 
   const rootId = message.root_id;
   const chatId = message.chat_id;
@@ -783,6 +850,53 @@ async function handleRegisterMessage(request, env) {
     expirationTtl: 604800,
   });
   return Response.json({ ok: true });
+}
+
+async function handleRelay(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return Response.json({ error: "bad request" }, { status: 400 });
+  }
+
+  const toChatId = data.to_chat_id;
+  const message = data.message || "";
+  const fromChatId = data.from_chat_id || "";
+  const fromChatName = data.from_chat_name || "";
+  const fromWorkspace = data.from_workspace || "";
+
+  if (!toChatId || !message) {
+    return Response.json(
+      { error: "missing to_chat_id or message" },
+      { status: 400 },
+    );
+  }
+
+  const reply = {
+    text: message,
+    msg_type: "relay",
+    from_chat_id: fromChatId,
+    from_chat_name: fromChatName,
+    from_workspace: fromWorkspace,
+    sender_type: "relay",
+    sender_id: "",
+    create_time: String(Date.now()),
+    message_id: "",
+  };
+
+  try {
+    await pushToDO(env, `chat:${toChatId}`, reply);
+    return Response.json({ ok: true });
+  } catch (e) {
+    if (isDOQuotaError(e)) {
+      return Response.json(
+        { ok: false, error: "do_quota_exhausted" },
+        { status: 503 },
+      );
+    }
+    return Response.json({ ok: false, error: e.message }, { status: 500 });
+  }
 }
 
 async function handleTakeover(env, url) {

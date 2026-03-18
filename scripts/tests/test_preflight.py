@@ -358,7 +358,7 @@ class CheckHooksTest(PreflightTestBase):
         ok, detail = preflight.check_hooks()
         if len(required) > 1:
             self.assertFalse(ok)
-            self.assertIn("not initialized", detail)
+            self.assertIn("Missing hooks", detail)
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,24 @@ def get_worktree_name():
     return handoff_config.get_worktree_name() or os.path.basename(handoff_config._require_project_dir())
 
 
+def _workspace_tag_matches(desc, tag):
+    """Check if description contains the exact workspace tag (not a prefix).
+
+    The tag (e.g. 'workspace:CarbonMac-Users-foo-bar') must appear as a
+    complete token — followed by whitespace, newline, or end of string.
+    This prevents 'workspace:A-B' from matching 'workspace:A-B-C'.
+    """
+    start = 0
+    while True:
+        idx = desc.find(tag, start)
+        if idx < 0:
+            return False
+        end = idx + len(tag)
+        if end >= len(desc) or desc[end] in (" ", "\n", "\r", "\t"):
+            return True
+        start = end
+
+
 def find_groups_for_workspace(token, workspace_id, open_id=None):
     """Find all Lark groups tagged with this workspace ID.
 
@@ -48,7 +66,7 @@ def find_groups_for_workspace(token, workspace_id, open_id=None):
             try:
                 info = lark_im.get_chat_info(token, cid)
                 desc = info.get("description") or ""
-                if workspace_tag not in desc:
+                if not _workspace_tag_matches(desc, workspace_tag):
                     continue
                 # If open_id is provided, verify user is a member of this chat
                 if open_id:
@@ -224,12 +242,64 @@ def create_handoff_group(
 
 
 def _reset_working_state():
-    """Clear the working card state so the next batch gets a fresh card."""
+    """Update working card to 'Done', then clear state and stop flag.
+
+    Acquires the same file lock used by on_post_tool_use._send_or_update_working()
+    to prevent a race where a concurrent PostToolUse hook reads the old msg_id,
+    then overwrites the "Done" card back to "Working..." after we clear the DB.
+    """
+    import fcntl
+
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         return
-    handoff_db.clear_working_message(session_id)
-    handoff_db.clear_autoapprove_message(session_id)
+
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    os.makedirs(tmp_dir, exist_ok=True)
+    lock_path = os.path.join(tmp_dir, f"working-{session_id}.lock")
+
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            # Update working card to "Done" before clearing
+            msg_id = handoff_db.get_working_message(session_id)
+            if msg_id:
+                try:
+                    credentials = handoff_config.load_credentials()
+                    if credentials:
+                        token = lark_im.get_tenant_token(
+                            credentials["app_id"], credentials["app_secret"],
+                        )
+                        _, created_at, _ = handoff_db.get_working_state(session_id)
+                        import time as _time
+                        elapsed = int(_time.time()) - created_at if created_at else 0
+                        if elapsed < 60:
+                            body = f"Completed in {elapsed}s"
+                        else:
+                            mins = elapsed // 60
+                            secs = elapsed % 60
+                            body = f"Completed in {mins}m {secs}s"
+                        done_card = lark_im.build_card("Done ✓", body=body, color="green")
+                        lark_im.update_card_message(token, msg_id, done_card)
+                except Exception:
+                    pass  # Non-critical — card may already be gone
+            handoff_db.clear_working_message(session_id)
+            handoff_db.clear_autoapprove_message(session_id)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    # Clear stop flag — user sent a new message, so stop is stale
+    _clear_stop_flag(session_id)
+
+
+def _clear_stop_flag(session_id):
+    """Remove the stop flag file for a session."""
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    flag_path = os.path.join(tmp_dir, f"stop-{session_id}.flag")
+    try:
+        os.unlink(flag_path)
+    except FileNotFoundError:
+        pass
 
 
 def send(token, chat_id, title, message, is_card, color, buttons=None,
@@ -252,6 +322,16 @@ def send(token, chat_id, title, message, is_card, color, buttons=None,
         # Use card for rich markdown formatting (lists, code, bold, etc.)
         card = lark_im.build_markdown_card(message, title=title)
         msg_id = lark_im.send_message(token, chat_id, card)
+    # Track heartbeat-style cards (--card, grey/no color, "Working" title) as
+    # working messages so _reset_working_state() can update them to "Done ✓"
+    # when the AI sends the real response via send_and_wait.py.
+    if is_card and color == "grey":
+        session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+        if session_id:
+            try:
+                handoff_db.set_working_message(session_id, msg_id)
+            except Exception:
+                pass
     # Record in local DB so we can resolve parent_id on replies
     try:
         handoff_db.record_sent_message(msg_id, text=message, title=title, chat_id=chat_id)
@@ -308,6 +388,13 @@ def main():
 
     token, chat_id = ctx["token"], ctx["chat_id"]
     title = args.title or ""
+
+    # Clear the "thinking" reaction before sending
+    try:
+        import wait_for_reply
+        wait_for_reply.clear_ack_reaction()
+    except Exception:
+        pass
 
     send(
         token,

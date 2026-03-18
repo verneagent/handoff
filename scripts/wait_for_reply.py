@@ -29,15 +29,37 @@ def warn(msg):
     print(f"[handoff] {msg}", file=sys.stderr)
 
 
+def filter_self_bot(replies, bot_open_id):
+    """Filter out messages sent by the bot itself.
+
+    Server-side no longer filters bot messages so that other bots in the
+    group can be heard. This client-side filter removes only messages from
+    the bot's own open_id to prevent self-echo loops.
+    """
+    if not bot_open_id:
+        return replies
+    return [
+        r for r in replies
+        if not (r.get("sender_type") == "app" and r.get("sender_id") == bot_open_id)
+    ]
+
+
 def filter_by_operator(replies, operator_open_id):
     """Filter replies to only those from the operator (by open_id).
 
     Applied regardless of mode — ensures only the configured operator's
-    messages are processed.
+    messages are processed.  Relay messages (sender_type == "relay") always
+    pass through.  Does not distinguish between human and bot senders —
+    only sender_id matters (the bot's own messages are already removed
+    by filter_self_bot upstream).
     """
     if not operator_open_id:
         return replies
-    return [r for r in replies if r.get("sender_id") == operator_open_id]
+    return [
+        r for r in replies
+        if r.get("sender_id") == operator_open_id
+        or r.get("sender_type") == "relay"
+    ]
 
 
 def filter_by_allowed_senders(replies, operator_open_id, member_roles):
@@ -54,6 +76,12 @@ def filter_by_allowed_senders(replies, operator_open_id, member_roles):
         return replies
     filtered = []
     for r in replies:
+        # Relay messages always pass through.
+        if r.get("sender_type") == "relay":
+            filtered.append(r)
+            continue
+        # Check sender_id regardless of sender_type (human or bot).
+        # The bot's own messages are already removed by filter_self_bot upstream.
         sid = r.get("sender_id", "")
         if sid not in allowed:
             continue
@@ -78,9 +106,9 @@ def filter_bot_interactions(replies, bot_open_id):
     """
     filtered = []
     for r in replies:
-        # Condition 3: reactions and stickers are always bot-directed
         msg_type = r.get("msg_type", "")
-        if msg_type in ("reaction", "sticker"):
+        # Relay and reaction/sticker messages always pass through.
+        if msg_type in ("relay", "reaction", "sticker"):
             filtered.append(r)
             continue
 
@@ -159,8 +187,67 @@ def fetch_replies_http(worker_url, chat_id, since):
     return result["replies"], result["takeover"], result["error"]
 
 
+_ACK_REACTION_FILE = os.path.join(
+    f"/private/tmp/claude-{os.getuid()}", "handoff-ack-reaction.json"
+)
+
+
+def _ack_with_reaction(replies):
+    """Add a 'thinking' reaction to the last user message to show it was received.
+
+    Saves the reaction info to a temp file so send scripts can remove it later.
+    """
+    last = replies[-1] if replies else None
+    if not last or not last.get("message_id"):
+        return
+    # Only react to human/bot text messages, not reactions/stickers/relay
+    if last.get("msg_type") in ("reaction", "sticker", "relay"):
+        return
+    # Clear any previous reaction before adding a new one
+    clear_ack_reaction()
+
+    try:
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        reaction_id = lark_im.add_reaction(token, last["message_id"], "THINKING")
+        # Save reaction info for removal by send scripts
+        with open(_ACK_REACTION_FILE, "w") as f:
+            json.dump({
+                "message_id": last["message_id"],
+                "reaction_id": reaction_id,
+            }, f)
+    except Exception as e:
+        warn(f"failed to add thinking reaction: {e}")
+
+
+def clear_ack_reaction():
+    """Remove the THINKING reaction added by _ack_with_reaction.
+
+    Called by send scripts before sending a response, to signal
+    that processing is complete. Fails silently.
+    """
+    try:
+        if not os.path.isfile(_ACK_REACTION_FILE):
+            return
+        with open(_ACK_REACTION_FILE) as f:
+            data = json.load(f)
+        os.unlink(_ACK_REACTION_FILE)
+        creds = handoff_config.load_credentials()
+        if not creds:
+            return
+        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+        lark_im.remove_reaction(token, data["message_id"], data["reaction_id"])
+    except Exception as e:
+        warn(f"failed to clear thinking reaction: {e}")
+
+
 def handle_result(replies, worker_url, chat_id, session_id):
     """Update last_checked and output reply JSON."""
+    # Acknowledge receipt with a reaction so the user sees we're processing
+    _ack_with_reaction(replies)
+
     for r in replies:
         try:
             handoff_db.record_received_message(
@@ -255,6 +342,8 @@ def main():
                     return
                 replies = result.get("replies", [])
                 if replies:
+                    replies = filter_self_bot(replies, bot_open_id)
+                if replies:
                     if member_roles:
                         replies = filter_by_allowed_senders(
                             replies, operator_open_id, member_roles)
@@ -305,6 +394,9 @@ def main():
                 # Ack processed replies via HTTP (WS already acks inline)
                 last_checked = replies[-1]["create_time"]
                 handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                replies = filter_self_bot(replies, bot_open_id)
+                if not replies:
+                    continue
                 if member_roles:
                     replies = filter_by_allowed_senders(
                         replies, operator_open_id, member_roles)

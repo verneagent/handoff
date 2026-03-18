@@ -186,7 +186,14 @@ def check_hooks():
     except RuntimeError:
         pass  # Global-only install, no project dir yet
 
-    if [h for h in required if h not in found]:
+    missing = [h for h in required if h not in found]
+    if missing:
+        if found:
+            # Some hooks exist but not all — needs update, not full init
+            return False, (
+                f"Missing hooks: {', '.join(missing)}. "
+                "Run /handoff init to update."
+            )
         return False, "Handoff is not initialized. Run /handoff init."
     return True, None
 

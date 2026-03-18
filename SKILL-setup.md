@@ -113,7 +113,40 @@ Then use **AskUserQuestion** to collect `app_id` and `app_secret`. Remember the 
 
 Use **AskUserQuestion** to collect the user's **Lark login email**. Emphasize: this is the **personal email** used to sign in to Lark (e.g. `name@gmail.com`, `name@outlook.com`), **NOT the corporate/enterprise email** (e.g. `name@company.com`). Corporate emails will not work with the lookup API.
 
-Remember the email — do NOT save yet. The `open_id` will be resolved on demand when creating a chat group.
+Remember the email — do NOT save yet.
+
+**Validate the email immediately** — attempt to resolve the `open_id` now so errors are caught during setup, not later:
+
+```bash
+python3 -c "
+import sys, os
+for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills/handoff/scripts')]:
+    if os.path.exists(p):
+        sys.path.insert(0, p)
+        break
+import lark_im, json
+token = lark_im.get_tenant_token('<APP_ID>', '<APP_SECRET>')
+oid = lark_im.lookup_open_id_by_email(token, '<EMAIL>')
+print(json.dumps({'open_id': oid}))
+"
+```
+
+Use the `app_id` and `app_secret` collected in Step 2.
+
+- If `open_id` is non-null: validation passed. Continue.
+- If `open_id` is null: the email cannot be resolved. Tell the user:
+
+  > **The email `<EMAIL>` can't be resolved to a Lark user.**
+  >
+  > Common causes and fixes:
+  >
+  > 1. **App not visible to this user** — Go to the **Lark Admin Console** (not the Developer Console) — [admin.larksuite.com](https://admin.larksuite.com) or [admin.feishu.cn](https://admin.feishu.cn). Navigate to **Workplace** → **App Management** → find your app → set **App Availability** (可用范围) to include the user or "All employees".
+  > 2. **Wrong email** — The `contact:user.id:readonly` API can only look up users **within the same Lark organization**. Make sure the email matches the account used to sign in to this org's Lark workspace. Personal emails (Gmail, Outlook) only work if that's the login email for the org.
+  > 3. **Missing scope** — Verify the app has `contact:user.id:readonly` permission in the Developer Console.
+  >
+  > After fixing, wait a moment and try again.
+
+  Use **AskUserQuestion** with options: "Retry" (re-run the validation) and "Skip" (proceed without validation — the user will fix it later).
 
 Warn: "All Claude handoff messages from this machine will be sent to this email's Lark account."
 
@@ -142,7 +175,7 @@ Tell the user: **"Plugin installed. Please exit and reopen OpenCode — plugins 
 
 Run the hook installer:
 ```bash
-python3 "$SKILL_SCRIPTS/install_hooks.py"
+python3 "scripts/install_hooks.py"
 ```
 
 This automatically:
@@ -201,7 +234,7 @@ handoff_config.save_credentials(
 
 When invoked with `profile:<name>`, replace `'<PROFILE_OR_NONE>'` with the profile name. For default init, use `None`.
 
-Apply hooks by running: `python3 "$SKILL_SCRIPTS/install_hooks.py"`
+Apply hooks by running: `python3 "scripts/install_hooks.py"`
 
 Then re-run the preflight check to confirm everything passes.
 

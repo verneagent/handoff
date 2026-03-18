@@ -165,86 +165,62 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertEqual(chat_id, "chat-1")
 
 
-    def test_known_session_tab_names_returns_tool_and_model(self):
-        handoff_db.register_session("s1", "chat-tabs", "opus 4.6")
-        names = handoff_ops._known_session_tab_names("chat-tabs")
-        self.assertIn("Claude Code", names)
-        self.assertIn("opus 4.6", names)
+    def test_is_handoff_tab_identifies_by_url(self):
+        """Verify _is_handoff_tab matches known handoff URLs."""
+        self.assertTrue(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://github.com/verneagent"}}
+        ))
+        self.assertTrue(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://example.com"}}
+        ))
+        # User-created tab with different URL
+        self.assertFalse(handoff_ops._is_handoff_tab(
+            {"tab_type": "url", "tab_content": {"url": "https://demo.olu.tech"}}
+        ))
+        # Non-URL tab types
+        self.assertFalse(handoff_ops._is_handoff_tab(
+            {"tab_type": "message"}
+        ))
 
-    def test_known_session_tab_names_empty_for_unknown_chat(self):
-        names = handoff_ops._known_session_tab_names("nonexistent-chat")
-        self.assertEqual(names, set())
-
-    def test_tabs_start_preserves_user_created_tabs(self):
-        """Verify that tabs-start only removes known session tabs, not user-created ones."""
-        handoff_db.register_session("s1", "chat-tab-test", "opus 4.6")
-        os.environ["HANDOFF_SESSION_ID"] = "s1"
-
-        # Simulate tabs: session tabs + a user-created tab
+    def test_stale_tab_cleanup_preserves_user_tabs(self):
+        """Verify tabs-start stale cleanup removes old handoff tabs but not user tabs."""
         fake_tabs = [
             {"tab_id": "1", "tab_type": "message"},
-            {"tab_id": "2", "tab_name": "old-tool", "tab_type": "url", "tab_content": {"url": "https://x.com"}},
-            {"tab_id": "3", "tab_name": "OLU Demo", "tab_type": "url", "tab_content": {"url": "https://demo.olu.tech"}},
+            {"tab_id": "10", "tab_name": "opus 4.6", "tab_type": "url",
+             "tab_content": {"url": "https://github.com/verneagent"}},
+            {"tab_id": "11", "tab_name": "old-model", "tab_type": "url",
+             "tab_content": {"url": "https://example.com"}},
+            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url",
+             "tab_content": {"url": "https://demo.olu.tech"}},
         ]
+        current_model = "opus 4.6"
 
-        # _known_session_tab_names for this chat should return {"Claude Code", "opus 4.6"}
-        known = handoff_ops._known_session_tab_names("chat-tab-test")
-        keep = {"Claude Code", "opus 4.6"}
-
-        # "old-tool" is NOT in known session names → should NOT be deleted
-        # "OLU Demo" is NOT in known session names → should NOT be deleted
+        # Stale = handoff tab + not current model
         stale_ids = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep
+            tab["tab_id"] for tab in fake_tabs
+            if handoff_ops._is_handoff_tab(tab)
+            and tab.get("tab_name") != current_model
             and tab.get("tab_id")
         ]
-        self.assertEqual(stale_ids, [])  # Nothing should be deleted
+        # "old-model" is handoff (example.com) and not current model → stale
+        # "opus 4.6" is handoff but IS current model → keep
+        # "OLU Demo" is NOT handoff → safe
+        self.assertEqual(stale_ids, ["11"])
 
-    def test_tabs_start_stale_logic_removes_session_tabs_only(self):
-        """Verify the stale-tab filter logic removes session tabs but keeps user tabs."""
-        # Session has tool="Claude Code" and model="opus 4.6"
-        handoff_db.register_session("s1", "chat-stale", "opus 4.6")
-
-        known = handoff_ops._known_session_tab_names("chat-stale")
-        self.assertIn("opus 4.6", known)
-        self.assertIn("Claude Code", known)
-        self.assertNotIn("OLU Demo", known)
-
+    def test_tabs_end_removes_all_handoff_tabs(self):
+        """Verify tabs-end removes all tabs with handoff URLs."""
         fake_tabs = [
-            {"tab_id": "10", "tab_name": "Claude Code", "tab_type": "url"},
-            {"tab_id": "11", "tab_name": "opus 4.6", "tab_type": "url"},
-            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url"},
+            {"tab_id": "1", "tab_type": "message"},
+            {"tab_id": "10", "tab_name": "opus 4.6", "tab_type": "url",
+             "tab_content": {"url": "https://github.com/verneagent"}},
+            {"tab_id": "12", "tab_name": "OLU Demo", "tab_type": "url",
+             "tab_content": {"url": "https://demo.olu.tech"}},
         ]
-
-        # Simulate keeping current session tabs, removing stale ones
-        keep = {"Claude Code", "opus 4.6"}
-        stale_ids = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep
-            and tab.get("tab_id")
+        remove_ids = [
+            tab["tab_id"] for tab in fake_tabs
+            if handoff_ops._is_handoff_tab(tab) and tab.get("tab_id")
         ]
-        # Nothing stale — both known names are in keep set, "OLU Demo" is not in known
-        self.assertEqual(stale_ids, [])
-
-        # Now simulate a different keep set (new session with different model)
-        keep_new = {"Claude Code", "sonnet 4"}
-        stale_ids_new = [
-            tab["tab_id"]
-            for tab in fake_tabs
-            if tab.get("tab_type") == "url"
-            and tab.get("tab_name") in known
-            and tab.get("tab_name") not in keep_new
-            and tab.get("tab_id")
-        ]
-        # "opus 4.6" is known AND not in keep_new → stale
-        # "OLU Demo" is NOT known → safe
-        self.assertEqual(stale_ids_new, ["11"])
+        self.assertEqual(remove_ids, ["10"])  # Only handoff tab removed
 
 
     def test_autoapprove_default_off(self):
@@ -285,39 +261,218 @@ class HandoffOpsUnitTest(unittest.TestCase):
         self.assertFalse(handoff_db.get_autoapprove("chat-aa3"))
 
 
-    def test_autoapprove_message_set_get_clear(self):
-        """Verify autoapprove card message_id storage works (same table as working_state)."""
-        handoff_db.register_session("s1", "chat-aam", "opus")
+class WorkspaceTagMatchTest(unittest.TestCase):
+    """Tests for _workspace_tag_matches in send_to_group."""
 
-        # Initially no message
-        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
+    def setUp(self):
+        import send_to_group  # type: ignore
+        self._match = send_to_group._workspace_tag_matches
 
-        # Set and get
-        handoff_db.set_autoapprove_message("s1", "msg-aa-1")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-1")
+    def test_exact_match(self):
+        desc = "workspace:CarbonMac-Users-foo-bar"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
 
-        # Update (upsert)
-        handoff_db.set_autoapprove_message("s1", "msg-aa-2")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa-2")
+    def test_match_followed_by_newline(self):
+        desc = "workspace:CarbonMac-Users-foo-bar\nextra info"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
 
-        # Clear
-        handoff_db.clear_autoapprove_message("s1")
-        self.assertIsNone(handoff_db.get_autoapprove_message("s1"))
+    def test_no_prefix_match(self):
+        """workspace:A-B must NOT match workspace:A-B-C (the worktree bug)."""
+        desc = "workspace:CarbonMac-Users-foo-bar-native_test2"
+        self.assertFalse(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
 
-    def test_autoapprove_message_independent_of_working(self):
-        """Autoapprove and working card message_ids don't interfere."""
-        handoff_db.register_session("s1", "chat-ind", "opus")
+    def test_no_match(self):
+        desc = "workspace:other-machine-path"
+        self.assertFalse(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
 
-        handoff_db.set_working_message("s1", "msg-working")
-        handoff_db.set_autoapprove_message("s1", "msg-aa")
+    def test_match_with_space_after(self):
+        desc = "workspace:CarbonMac-Users-foo-bar other-tag"
+        self.assertTrue(self._match(desc, "workspace:CarbonMac-Users-foo-bar"))
 
-        self.assertEqual(handoff_db.get_working_message("s1"), "msg-working")
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
+    def test_empty_desc(self):
+        self.assertFalse(self._match("", "workspace:foo"))
 
-        # Clearing one doesn't affect the other
+
+class WorkingCardTest(unittest.TestCase):
+    """Tests for working card: time-based titles, stop flag, DB state."""
+
+    def setUp(self):
+        self._old_home = os.environ.get("HOME")
+        self._old_project = os.environ.get("HANDOFF_PROJECT_DIR")
+        self._old_session = os.environ.get("HANDOFF_SESSION_ID")
+        self._old_tool = os.environ.get("HANDOFF_SESSION_TOOL")
+        self._old_handoff_home = handoff_config.HANDOFF_HOME
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.project_dir = os.path.join(self.tmp.name, "project")
+        os.makedirs(self.project_dir, exist_ok=True)
+
+        os.environ["HOME"] = self.tmp.name
+        os.environ["HANDOFF_PROJECT_DIR"] = self.project_dir
+        os.environ["HANDOFF_SESSION_TOOL"] = "Claude Code"
+        os.environ.pop("HANDOFF_SESSION_ID", None)
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, ".handoff")
+
+        self.db_path = handoff_db._db_path()
+        handoff_db._db_initialized.discard(self.db_path)
+        conn = handoff_db._get_db()
+        conn.close()
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        if self._old_project is None:
+            os.environ.pop("HANDOFF_PROJECT_DIR", None)
+        else:
+            os.environ["HANDOFF_PROJECT_DIR"] = self._old_project
+        if self._old_session is None:
+            os.environ.pop("HANDOFF_SESSION_ID", None)
+        else:
+            os.environ["HANDOFF_SESSION_ID"] = self._old_session
+        if self._old_tool is None:
+            os.environ.pop("HANDOFF_SESSION_TOOL", None)
+        else:
+            os.environ["HANDOFF_SESSION_TOOL"] = self._old_tool
+        handoff_config.HANDOFF_HOME = self._old_handoff_home
+        self.tmp.cleanup()
+
+    def test_working_title_time_based(self):
+        """Title escalates based on elapsed seconds, not call count."""
+        import on_post_tool_use  # type: ignore
+        self.assertEqual(on_post_tool_use._working_title(0), "Working...")
+        self.assertEqual(on_post_tool_use._working_title(10), "Working...")
+        self.assertEqual(on_post_tool_use._working_title(20), "Working hard...")
+        self.assertEqual(on_post_tool_use._working_title(39), "Working hard...")
+        self.assertEqual(on_post_tool_use._working_title(40), "Working really hard...")
+        self.assertEqual(on_post_tool_use._working_title(60), "Working super hard...")
+        self.assertEqual(on_post_tool_use._working_title(90), "Working incredibly hard...")
+        self.assertEqual(on_post_tool_use._working_title(120), "Working unreasonably hard...")
+        self.assertEqual(on_post_tool_use._working_title(180), "Working absurdly hard...")
+        self.assertEqual(on_post_tool_use._working_title(240), "Working impossibly hard...")
+        self.assertEqual(on_post_tool_use._working_title(300), "Working ridiculously hard...")
+        self.assertEqual(on_post_tool_use._working_title(420), "Working cosmically hard...")
+        self.assertEqual(on_post_tool_use._working_title(600), "Working transcendently hard...")
+        self.assertEqual(on_post_tool_use._working_title(900), "Working beyond comprehension...")
+        self.assertEqual(on_post_tool_use._working_title(9999), "Working beyond comprehension...")
+
+    def test_set_working_preserves_created_at_on_update(self):
+        """created_at should be set on INSERT but not changed on UPDATE."""
+        import time
+        handoff_db.set_working_message("s1", "msg-1")
+        _, created_at_1, counter_1 = handoff_db.get_working_state("s1")
+        self.assertEqual(counter_1, 1)
+        self.assertGreater(created_at_1, 0)
+
+        time.sleep(0.1)
+        handoff_db.set_working_message("s1", "msg-1")
+        _, created_at_2, counter_2 = handoff_db.get_working_state("s1")
+        self.assertEqual(counter_2, 2)
+        # created_at should NOT change on update
+        self.assertEqual(created_at_2, created_at_1)
+
+    def test_clear_working_resets_all(self):
+        """clear_working_message removes the entire row."""
+        handoff_db.set_working_message("s1", "msg-1")
         handoff_db.clear_working_message("s1")
-        self.assertIsNone(handoff_db.get_working_message("s1"))
-        self.assertEqual(handoff_db.get_autoapprove_message("s1"), "msg-aa")
+        msg_id, created_at, counter = handoff_db.get_working_state("s1")
+        self.assertIsNone(msg_id)
+        self.assertEqual(created_at, 0)
+        self.assertEqual(counter, 0)
+
+    def test_get_working_message_compat(self):
+        """get_working_message still returns just the message_id."""
+        handoff_db.set_working_message("s1", "msg-abc")
+        self.assertEqual(handoff_db.get_working_message("s1"), "msg-abc")
+        self.assertIsNone(handoff_db.get_working_message("nonexistent"))
+
+    def test_build_working_card_has_stop_button(self):
+        """build_working_card includes a Stop button by default."""
+        import lark_im  # type: ignore
+        card = lark_im.build_working_card(
+            "test content", title="Working...", chat_id="oc_123",
+        )
+        self.assertEqual(card["schema"], "2.0")
+        elements = card["body"]["elements"]
+        self.assertEqual(len(elements), 2)  # markdown + action
+        action_el = elements[1]
+        self.assertEqual(action_el["tag"], "action")
+        btn = action_el["actions"][0]
+        self.assertEqual(btn["type"], "default")
+        self.assertEqual(btn["value"]["action"], "__stop__")
+        self.assertEqual(btn["value"]["chat_id"], "oc_123")
+
+    def test_build_working_card_no_stop(self):
+        """build_working_card with show_stop=False has no button."""
+        import lark_im  # type: ignore
+        card = lark_im.build_working_card(
+            "stopped", title="Stopped", show_stop=False,
+        )
+        elements = card["body"]["elements"]
+        self.assertEqual(len(elements), 1)  # markdown only
+
+    def test_stop_flag_lifecycle(self):
+        """Stop flag file can be created and cleared."""
+        import on_post_tool_use  # type: ignore
+        import send_to_group as stg  # type: ignore
+
+        session_id = "test-stop-session"
+        tmp_dir = os.path.join(self.tmp.name, "handoff-tmp")
+        os.environ["HANDOFF_TMP_DIR"] = tmp_dir
+        try:
+            flag_path = on_post_tool_use._stop_flag_path(session_id)
+            self.assertIn(session_id, flag_path)
+
+            # Create flag
+            os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+            with open(flag_path, "w") as f:
+                f.write("1")
+            self.assertTrue(os.path.exists(flag_path))
+
+            # Clear flag
+            stg._clear_stop_flag(session_id)
+            self.assertFalse(os.path.exists(flag_path))
+
+            # Clear non-existent flag — should not raise
+            stg._clear_stop_flag(session_id)
+        finally:
+            os.environ.pop("HANDOFF_TMP_DIR", None)
+
+    def test_pre_tool_use_denies_on_stop_flag(self):
+        """PreToolUse hook denies tool call when stop flag exists."""
+        import subprocess
+
+        session_id = "test-pre-stop"
+        tmp_dir = os.path.join(self.tmp.name, "handoff-tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        flag_path = os.path.join(tmp_dir, f"stop-{session_id}.flag")
+        with open(flag_path, "w") as f:
+            f.write("1")
+
+        hook_input = json.dumps({
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo hello"},
+        })
+        env = os.environ.copy()
+        env["HANDOFF_SESSION_ID"] = session_id
+        env["HANDOFF_TMP_DIR"] = tmp_dir
+
+        result = subprocess.run(
+            ["python3", os.path.join(SCRIPT_DIR, "on_pre_tool_use_bash.py")],
+            input=hook_input, capture_output=True, text=True, env=env,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output["decision"], "deny")
+        self.assertIn("Stopped", output["reason"])
+
+        # Without flag — should exit with no decision (empty stdout)
+        os.unlink(flag_path)
+        result = subprocess.run(
+            ["python3", os.path.join(SCRIPT_DIR, "on_pre_tool_use_bash.py")],
+            input=hook_input, capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(result.stdout.strip(), "")
 
 
 if __name__ == "__main__":

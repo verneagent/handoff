@@ -188,20 +188,26 @@ def main():
         handoff_config.set_active_profile(args.profile)
     resolved_profile = handoff_config._resolve_profile()
 
-    # Check if hooks were just installed but not yet loaded (requires restart)
+    # Verify required env vars are present (proves SessionStart hook ran)
     marker = f"/private/tmp/claude-{os.getuid()}/handoff-hooks-pending"
-    if os.path.exists(marker):
-        _jprint({
-            "status": "hooks_pending",
-            "message": "Hooks were just installed. Exit and restart Claude Code to activate them, then run /handoff.",
-        })
-        return 1
-
-    # Verify required env vars are present
     err = _resolve_env()
     if err:
-        _jprint(err)
+        # Env vars missing — differentiate between "hooks just installed" and
+        # "hooks installed but not loading" using the pending marker.
+        if os.path.exists(marker):
+            _jprint({
+                "status": "hooks_pending",
+                "message": "Hooks were just installed. Exit and restart Claude Code to activate them, then run /handoff.",
+            })
+        else:
+            _jprint(err)
         return 1
+    # Env vars present — SessionStart hook ran. Clear stale marker if present.
+    if os.path.exists(marker):
+        try:
+            os.unlink(marker)
+        except OSError:
+            pass
     project_dir = os.environ["HANDOFF_PROJECT_DIR"]
     session_id = os.environ["HANDOFF_SESSION_ID"]
 

@@ -58,6 +58,7 @@ _WORKING_STATE_COLS = {
     "session_id",
     "message_id",
     "created_at",
+    "counter",
 }
 _MESSAGES_COLS = {
     "message_id",
@@ -141,7 +142,8 @@ def _get_db():
             "CREATE TABLE IF NOT EXISTS working_state ("
             "  session_id TEXT NOT NULL PRIMARY KEY,"
             "  message_id TEXT NOT NULL,"
-            "  created_at INTEGER NOT NULL"
+            "  created_at INTEGER NOT NULL,"
+            "  counter INTEGER NOT NULL DEFAULT 0"
             ")"
         )
         conn.commit()
@@ -559,32 +561,48 @@ def get_member_roles(session_id):
 
 
 def set_working_message(session_id, message_id):
-    """Store the "Working..." card message_id for a session."""
+    """Store the "Working..." card message_id and increment counter.
+
+    On INSERT, sets created_at to now. On UPDATE, preserves created_at
+    so elapsed time is measured from card creation, not last update.
+    Returns the new counter value.
+    """
     conn = _get_db()
     try:
         conn.execute(
-            "INSERT INTO working_state (session_id, message_id, created_at)"
-            " VALUES (?, ?, ?)"
+            "INSERT INTO working_state (session_id, message_id, created_at, counter)"
+            " VALUES (?, ?, ?, 1)"
             " ON CONFLICT(session_id) DO UPDATE"
-            " SET message_id = ?, created_at = ?",
-            (session_id, message_id, int(time.time()), message_id, int(time.time())),
+            " SET message_id = ?, counter = counter + 1",
+            (session_id, message_id, int(time.time()), message_id),
         )
         conn.commit()
+        row = conn.execute(
+            "SELECT counter FROM working_state WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return row[0] if row else 1
+    finally:
+        conn.close()
+
+
+def get_working_state(session_id):
+    """Return (message_id, created_at, counter) for a session, or (None, 0, 0)."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT message_id, created_at, counter FROM working_state WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return (row[0], row[1], row[2]) if row else (None, 0, 0)
     finally:
         conn.close()
 
 
 def get_working_message(session_id):
     """Return the working card message_id for a session, or None."""
-    conn = _get_db()
-    try:
-        row = conn.execute(
-            "SELECT message_id FROM working_state WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+    msg_id, _, _ = get_working_state(session_id)
+    return msg_id
 
 
 def clear_working_message(session_id):

@@ -50,6 +50,7 @@ SHARED_SCRIPTS = os.path.join(
 _log(f"SHARED_SCRIPTS={SHARED_SCRIPTS} exists={os.path.isdir(SHARED_SCRIPTS)}")
 sys.path.insert(0, SHARED_SCRIPTS)
 
+import handoff_db  # type: ignore
 import lark_im  # type: ignore
 from permission_core import (  # type: ignore
     prepare_permission_request,
@@ -58,6 +59,36 @@ from permission_core import (  # type: ignore
     send_permission_denied_card,
 )
 from worker_http import ack_worker_urllib, poll_worker_urllib  # type: ignore
+
+
+def _send_or_update_autoapprove(session_id, token, chat_id, tool_type, message):
+    """Send or update the merged 'Auto-approved' card."""
+    import fcntl
+
+    summary = f"`{tool_type}`: {message}" if message else f"`{tool_type}`"
+    card = lark_im.build_card("Auto-approved", body=summary, color="grey")
+
+    lock_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, f"autoapprove-{session_id}.lock")
+
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            existing_msg_id = handoff_db.get_autoapprove_message(session_id)
+            if existing_msg_id:
+                try:
+                    lark_im.update_card_message(token, existing_msg_id, card)
+                    return
+                except Exception as e:
+                    _log(f"failed to update autoapprove card: {e}")
+            try:
+                msg_id = lark_im.send_message(token, chat_id, card)
+                handoff_db.set_autoapprove_message(session_id, msg_id)
+            except Exception as e:
+                _log(f"failed to send autoapprove card: {e}")
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def main():
@@ -90,6 +121,13 @@ def main():
         for g in session.get("guests") or []:
             if g.get("role") == "coowner":
                 approver_ids.add(g["open_id"])
+
+    # Autoapprove: skip the permission card, send/update lightweight notification
+    if session and session.get("autoapprove"):
+        _log(f"autoapprove: auto-allowing {tool_type}")
+        _send_or_update_autoapprove(session_id, token, chat_id, tool_type, message)
+        print("allow")
+        return
 
     _log(f"chat_id={chat_id}, worker_url={worker_url}, operator={operator_open_id}")
 

@@ -51,8 +51,6 @@ SKIP_COMMANDS = (
     # Env var prefixes used by handoff infrastructure calls
     "HANDOFF_PROJECT_DIR=",
     "HANDOFF_SESSION_ID=",
-    "SKILL_SCRIPTS=",
-    "$SKILL_SCRIPTS",
 )
 
 
@@ -378,10 +376,53 @@ def _format_bash(tool_input, tool_response, cwd):
     return "", body
 
 
+def _format_team_create(tool_input, tool_response, cwd):
+    """Format TeamCreate event — team spawned."""
+    team_name = tool_response.get("teamName", "")
+    members = tool_response.get("members", [])
+    if not members:
+        return None, None
+
+    member_lines = []
+    for m in members:
+        name = m.get("name", "?")
+        agent_type = m.get("agentType", "")
+        member_lines.append(f"  • **{name}**" + (f" ({agent_type})" if agent_type else ""))
+
+    body = f"**Team created: {team_name}**\n" + "\n".join(member_lines)
+    return "", body
+
+
+def _format_send_message(tool_input, tool_response, cwd):
+    """Format SendMessage event — inter-agent communication."""
+    msg_type = tool_input.get("type", "message")
+    to = tool_input.get("to", "")
+    summary = tool_input.get("summary", "")
+
+    if msg_type == "shutdown_request":
+        body = f"**Shutting down** teammate: {to}"
+    elif msg_type == "broadcast":
+        body = f"**Broadcast:** {summary}" if summary else "**Broadcast sent**"
+    elif msg_type == "message" and to:
+        body = f"**→ {to}:** {summary}" if summary else f"**Message to {to}**"
+    else:
+        return None, None
+
+    return "", _truncate(body, 500)
+
+
+def _format_team_delete(tool_input, tool_response, cwd):
+    """Format TeamDelete event — team dissolved."""
+    return "", "**Team dissolved**"
+
+
 FORMATTERS = {
     "Edit": _format_edit,
     "Write": _format_write,
     "Bash": _format_bash,
+    "TeamCreate": _format_team_create,
+    "SendMessage": _format_send_message,
+    "TeamDelete": _format_team_delete,
 }
 
 
@@ -464,19 +505,46 @@ def _tool_summary(tool_name, tool_input):
     return f"`{tool_name}`"
 
 
+_WORKING_TITLES = [
+    (0, "Working..."),
+    (20, "Working hard..."),
+    (40, "Working really hard..."),
+    (60, "Working super hard..."),
+    (90, "Working incredibly hard..."),
+    (120, "Working unreasonably hard..."),
+    (180, "Working absurdly hard..."),
+    (240, "Working impossibly hard..."),
+    (300, "Working ridiculously hard..."),
+    (420, "Working cosmically hard..."),
+    (600, "Working transcendently hard..."),
+    (900, "Working beyond comprehension..."),
+]
+
+
+def _working_title(elapsed_seconds):
+    """Return an escalating title based on elapsed time since card creation."""
+    title = _WORKING_TITLES[0][1]
+    for threshold, t in _WORKING_TITLES:
+        if elapsed_seconds >= threshold:
+            title = t
+    return title
+
+
 def _send_or_update_working(session_id, session, tool_name, tool_input):
     """Send or update the 'Working...' card for filtered messages.
 
     Uses a file lock to prevent parallel hooks from each sending a new card.
+    Title escalates with elapsed time since card creation. Includes a Stop
+    button so the user can interrupt execution from Lark.
     """
     import fcntl
+    import time as _time
 
     token, chat_id = _get_token(session)
     if not token:
         return
 
     summary = _tool_summary(tool_name, tool_input)
-    card = lark_im.build_markdown_card(summary, title="Working hard...", color="grey")
 
     lock_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
     os.makedirs(lock_dir, exist_ok=True)
@@ -485,10 +553,35 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
     with open(lock_path, "w") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
-            existing_msg_id = handoff_db.get_working_message(session_id)
+            existing_msg_id, created_at, _counter = handoff_db.get_working_state(session_id)
+            elapsed = int(_time.time()) - created_at if created_at else 0
+            title = _working_title(elapsed)
+            # Use V1 card format (build_card) instead of V2 (build_working_card /
+            # build_markdown_card).  During Lark Card V2 outages (error 230099),
+            # send_message falls back to V1, but update_card_message has no such
+            # fallback — it fails silently, causing each PostToolUse to create a
+            # new card instead of updating the existing one.  V1 cards support
+            # title, markdown body, and buttons — everything the working card
+            # needs — and send/update work reliably regardless of V2 status.
+            # Build approvers list: owner + coowners can stop
+            approvers = []
+            op_id = session.get("operator_open_id", "")
+            if op_id:
+                approvers.append(op_id)
+            for g in session.get("guests") or []:
+                if g.get("role") == "coowner" and g.get("open_id"):
+                    approvers.append(g["open_id"])
+            card = lark_im.build_card(
+                title, body=summary, color="grey",
+                buttons=[("Stop", "__stop__", "default")],
+                chat_id=chat_id,
+                extra_value={"approvers": approvers} if approvers else None,
+            )
+
             if existing_msg_id:
                 try:
                     lark_im.update_card_message(token, existing_msg_id, card)
+                    handoff_db.set_working_message(session_id, existing_msg_id)
                     return
                 except Exception as e:
                     warn(f"failed to update working card: {e}")
@@ -534,16 +627,23 @@ def main():
             if skip in command:
                 return
 
+    # Agent Teams events always bypass message filter
+    ALWAYS_FORWARD = {"TeamCreate", "SendMessage", "TeamDelete"}
+
     # Message filter: concise = no forwarding, important = edit/write only
     msg_filter = session.get("message_filter", "concise")
     should_filter = False
-    if msg_filter == "concise":
-        should_filter = True
-    elif msg_filter == "important" and tool_name == "Bash":
-        should_filter = True
+    if tool_name not in ALWAYS_FORWARD:
+        if msg_filter == "concise":
+            should_filter = True
+        elif msg_filter == "important" and tool_name == "Bash":
+            should_filter = True
 
     if should_filter:
-        _send_or_update_working(session_id, session, tool_name, tool_input)
+        # Check local stop flag first — if set, don't overwrite the card
+        if not os.path.exists(_stop_flag_path(session_id)):
+            _send_or_update_working(session_id, session, tool_name, tool_input)
+            _check_stop_signal(session_id, session)
         return
 
     if is_failure:
@@ -568,7 +668,68 @@ def main():
             return
         color = "grey"
 
-    _send_card(session, title, body, color)
+    # Don't send new cards if stop flag is set
+    if not os.path.exists(_stop_flag_path(session_id)):
+        _send_card(session, title, body, color)
+        _check_stop_signal(session_id, session)
+
+
+def _stop_flag_path(session_id):
+    """Return the path to the stop flag file for a session."""
+    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
+    return os.path.join(tmp_dir, f"stop-{session_id}.flag")
+
+
+def _check_stop_signal(session_id, session):
+    """Check worker for a __stop__ signal and write a local flag file if found.
+
+    Does a quick non-blocking poll (timeout=0) to the worker. If a __stop__
+    reply is waiting, writes a flag file that PreToolUse hooks will check.
+    """
+    try:
+        import handoff_worker
+
+        chat_id = session.get("chat_id", "")
+        if not chat_id:
+            return
+
+        worker_url = handoff_config.load_worker_url()
+        if not worker_url:
+            return
+
+        api_key = handoff_config.load_api_key()
+        if not api_key:
+            return
+
+        # Quick non-blocking check via the /stop/ endpoint
+        stop_url = f"{worker_url}/stop/chat:{chat_id}"
+        import urllib.request
+        req = urllib.request.Request(
+            stop_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+
+        if data.get("stop"):
+            flag_path = _stop_flag_path(session_id)
+            os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+            with open(flag_path, "w") as f:
+                f.write("1")
+            # Update the working card to "Stopped"
+            token, card_chat_id = _get_token(session)
+            if token:
+                msg_id = handoff_db.get_working_message(session_id)
+                if msg_id:
+                    stopped_card = lark_im.build_card(
+                        "Stopped", body="Stopped by user.", color="red",
+                    )
+                    try:
+                        lark_im.update_card_message(token, msg_id, stopped_card)
+                    except Exception:
+                        pass
+    except Exception as e:
+        warn(f"stop signal check failed: {e}")
 
 
 if __name__ == "__main__":
