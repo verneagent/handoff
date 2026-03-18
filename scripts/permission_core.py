@@ -147,6 +147,9 @@ def resolve_permission_context(lark_im_mod, session_id):
     if not session:
         return {"ok": False, "error": "inactive"}
 
+    # Set active profile from session so config loads use the right profile
+    handoff_config.set_profile_from_session(session)
+
     chat_id = session.get("chat_id")
     if not chat_id:
         return {"ok": False, "error": "no_chat_id"}

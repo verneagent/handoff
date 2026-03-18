@@ -611,6 +611,9 @@ def main():
     if not session:
         return
 
+    # Set active profile from session so config loads use the right profile
+    handoff_config.set_profile_from_session(session)
+
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
     cwd = hook_input.get("cwd", os.getcwd())

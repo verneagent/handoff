@@ -42,6 +42,7 @@ class PreflightTestBase(unittest.TestCase):
     def tearDown(self):
         handoff_config.CONFIG_FILE = self._orig_config_file
         handoff_config.HANDOFF_HOME = self._orig_handoff_home
+        handoff_config.set_active_profile(None)
 
         for key, val in [
             ("HOME", self._old_home),
@@ -73,15 +74,19 @@ class PreflightTestBase(unittest.TestCase):
 class CheckCredentialsTest(PreflightTestBase):
     def test_missing_config_file(self):
         handoff_config.CONFIG_FILE = os.path.join(self.tmp.name, "nonexistent.json")
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, "nonexistent_dir")
         ok, detail = preflight.check_credentials()
         self.assertFalse(ok)
         self.assertIn("not found", detail)
 
     def test_invalid_json(self):
-        config_path = os.path.join(self.tmp.name, "bad.json")
+        config_dir = os.path.join(self.tmp.name, "bad_cfg")
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "config.json")
         with open(config_path, "w") as f:
             f.write("not json {{{")
         handoff_config.CONFIG_FILE = config_path
+        handoff_config.HANDOFF_HOME = config_dir
 
         ok, detail = preflight.check_credentials()
         self.assertFalse(ok)
@@ -390,6 +395,8 @@ class MainFlowTest(PreflightTestBase):
             sys.stdout = old_stdout
 
     def test_all_checks_fail_exits_1(self):
+        # Point HANDOFF_HOME to a dir with no config.json so check_credentials fails
+        handoff_config.HANDOFF_HOME = os.path.join(self.tmp.name, "nope_dir")
         handoff_config.CONFIG_FILE = os.path.join(self.tmp.name, "nope.json")
         handoff_config.load_worker_url = lambda: None
         handoff_config.load_api_key = lambda: None
