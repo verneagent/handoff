@@ -313,28 +313,35 @@ export default {
       }
       const doAvailable = doStatus === "ok";
       const hasVerifyToken = !!env.VERIFY_TOKEN;
-      // Probe KV availability (read + write)
-      let kvStatus = "ok";
+      // Probe KV availability (read and write separately)
+      let kvReadStatus = "ok";
+      let kvWriteStatus = "ok";
+      const kvTestKey = `health:${Date.now()}`;
       try {
-        const kvTestKey = `health:${Date.now()}`;
         await env.LARK_REPLIES.put(kvTestKey, "1", { expirationTtl: 60 });
-        const val = await env.LARK_REPLIES.get(kvTestKey);
-        if (val !== "1") kvStatus = "read_mismatch";
       } catch (e) {
-        kvStatus = `error: ${e.message || e}`;
+        kvWriteStatus = `error: ${e.message || e}`;
       }
-      const kvAvailable = kvStatus === "ok";
-      const ok = doAvailable && hasVerifyToken && kvAvailable;
+      try {
+        await env.LARK_REPLIES.get(kvTestKey);
+      } catch (e) {
+        kvReadStatus = `error: ${e.message || e}`;
+      }
+      const kvReadOk = kvReadStatus === "ok";
+      const kvWriteOk = kvWriteStatus === "ok";
+      const ok = doAvailable && hasVerifyToken && kvReadOk && kvWriteOk;
       const reasons = [];
       if (doStatus === "quota_exhausted") reasons.push("Durable Objects quota exhausted");
       else if (!doAvailable) reasons.push(`Durable Objects ${doStatus}`);
       if (!hasVerifyToken) reasons.push("VERIFY_TOKEN not configured");
-      if (!kvAvailable) reasons.push(`KV ${kvStatus}`);
+      if (!kvReadOk) reasons.push(`KV read ${kvReadStatus}`);
+      if (!kvWriteOk) reasons.push(`KV write ${kvWriteStatus}`);
       return Response.json({
         ok,
         verify_token: hasVerifyToken,
         do_available: doAvailable,
-        kv_available: kvAvailable,
+        kv_read: kvReadOk,
+        kv_write: kvWriteOk,
         ...(reasons.length > 0 && { reason: reasons.join("; ") }),
       });
     }
