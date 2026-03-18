@@ -73,15 +73,21 @@ def _resolve_profile(profile=None):
     2. Module-level _active_profile (set by set_active_profile())
     3. HANDOFF_PROFILE env var
     4. get_default_profile()
+
+    All sources are validated to prevent path traversal.
     """
     if profile:
+        _validate_profile_name(profile)
         return profile
     if _active_profile:
-        return _active_profile
+        return _active_profile  # already validated by set_active_profile()
     env_profile = os.environ.get("HANDOFF_PROFILE", "").strip()
     if env_profile:
+        _validate_profile_name(env_profile)
         return env_profile
-    return get_default_profile()
+    name = get_default_profile()
+    _validate_profile_name(name)
+    return name
 
 
 def get_default_profile():
@@ -111,7 +117,6 @@ def resolve_config_file(profile=None):
     other -> ~/.handoff/profiles/<name>.json
     """
     name = _resolve_profile(profile)
-    _validate_profile_name(name)
     if name == "default":
         return os.path.join(HANDOFF_HOME, "config.json")
     return os.path.join(HANDOFF_HOME, "profiles", f"{name}.json")

@@ -1927,8 +1927,7 @@ def main():
             try:
                 session = handoff_db.get_session(sid)
                 if session:
-                    handoff_config.set_active_profile(
-                        session.get("config_profile", "default"))
+                    handoff_config.set_profile_from_session(session)
             except Exception:
                 pass
     try:
