@@ -58,7 +58,7 @@ def _require_active_chat_id():
     if not session:
         raise RuntimeError("no_active_handoff")
     # Set profile from session so subsequent config loads use the right profile
-    handoff_config.set_active_profile(session.get("config_profile", "default"))
+    handoff_config.set_profile_from_session(session)
     chat_id = session.get("chat_id", "")
     if not chat_id:
         raise RuntimeError("missing_chat_id")
@@ -506,13 +506,18 @@ def cmd_deactivate(args):
     env_file = os.environ.get("CLAUDE_ENV_FILE")
     if env_file and os.path.exists(env_file):
         try:
+            import tempfile as _tf
             with open(env_file) as f:
                 lines = [l for l in f.readlines()
                          if not l.startswith("export HANDOFF_PROFILE=")]
-            with open(env_file, "w") as f:
+            dir_name = os.path.dirname(env_file) or "."
+            fd, tmp = _tf.mkstemp(dir=dir_name)
+            with os.fdopen(fd, "w") as f:
                 f.writelines(lines)
+            os.rename(tmp, env_file)
         except Exception:
             pass
+    handoff_config.set_active_profile(None)
     _jprint({"ok": True, "deactivated": True, "chat_id": chat_id or ""})
     return 0
 
@@ -1613,8 +1618,8 @@ def cmd_profile_list(args):
 def cmd_profile_show(args):
     """Show the active profile's config (redacted)."""
     profile = handoff_config._resolve_profile()
-    cfg_path = handoff_config.resolve_config_file()
-    raw = handoff_config._load_config()
+    cfg_path = handoff_config.resolve_config_file(profile)
+    raw = handoff_config._load_config(profile)
     im_cfg = handoff_config._resolve_im_config(raw) or {}
     _jprint({
         "ok": True,

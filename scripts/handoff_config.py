@@ -13,6 +13,7 @@ import sys
 HANDOFF_HOME = os.path.expanduser("~/.handoff")
 _CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]+$")
 _CHAT_ID_MAX_LEN = 128
+_PROFILE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def is_valid_chat_id(chat_id):
@@ -42,14 +43,26 @@ CONFIG_FILE = default_config_file()
 _active_profile = None
 
 
+def _validate_profile_name(name):
+    """Raise ValueError if name contains path-unsafe characters."""
+    if name and name != "default" and not _PROFILE_NAME_RE.match(name):
+        raise ValueError(f"Invalid profile name: {name!r}")
+
+
 def set_active_profile(profile):
     """Set the process-wide active profile.
 
     Called once at process start (entry points, hooks) so all subsequent
     config loads use the correct profile without explicit parameters.
     """
+    _validate_profile_name(profile)
     global _active_profile
     _active_profile = profile
+
+
+def set_profile_from_session(session):
+    """Set the active profile from a session dict (convenience for hooks)."""
+    set_active_profile(session.get("config_profile", "default"))
 
 
 def _resolve_profile(profile=None):
@@ -84,6 +97,7 @@ def get_default_profile():
 
 def set_default_profile(name):
     """Set the default profile name."""
+    _validate_profile_name(name)
     path = os.path.join(HANDOFF_HOME, "default_profile")
     os.makedirs(HANDOFF_HOME, exist_ok=True)
     with open(path, "w") as f:
@@ -97,16 +111,18 @@ def resolve_config_file(profile=None):
     other -> ~/.handoff/profiles/<name>.json
     """
     name = _resolve_profile(profile)
+    _validate_profile_name(name)
     if name == "default":
         return os.path.join(HANDOFF_HOME, "config.json")
     return os.path.join(HANDOFF_HOME, "profiles", f"{name}.json")
 
 
 def list_profiles():
-    """List all available profile names."""
-    profiles = []
-    if os.path.exists(os.path.join(HANDOFF_HOME, "config.json")):
-        profiles.append("default")
+    """List all available profile names.
+
+    Always includes "default" so initial setup is discoverable.
+    """
+    profiles = ["default"]
     profiles_dir = os.path.join(HANDOFF_HOME, "profiles")
     if os.path.isdir(profiles_dir):
         for fname in sorted(os.listdir(profiles_dir)):

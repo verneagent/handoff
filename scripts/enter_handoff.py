@@ -25,6 +25,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
@@ -133,8 +134,11 @@ def _resolve_env():
                         lines = [l for l in f.readlines()
                                  if not l.startswith("export HANDOFF_PROFILE=")]
                 lines.append(f"export HANDOFF_PROFILE={shlex.quote(profile)}\n")
-                with open(env_file, "w") as f:
+                dir_name = os.path.dirname(env_file) or "."
+                fd, tmp = tempfile.mkstemp(dir=dir_name)
+                with os.fdopen(fd, "w") as f:
                     f.writelines(lines)
+                os.rename(tmp, env_file)
             except Exception:
                 pass
 
@@ -182,6 +186,7 @@ def main():
     # Set active profile early so all config loads use the right profile
     if args.profile:
         handoff_config.set_active_profile(args.profile)
+    resolved_profile = handoff_config._resolve_profile()
 
     # Check if hooks were just installed but not yet loaded (requires restart)
     marker = f"/private/tmp/claude-{os.getuid()}/handoff-hooks-pending"
@@ -241,7 +246,6 @@ def main():
         except Exception:
             pass
 
-        profile = handoff_config._resolve_profile()
         handoff_db.activate_handoff(
             session_id,
             chat_id_to_activate,
@@ -249,7 +253,7 @@ def main():
             operator_open_id=open_id,
             bot_open_id=bot_open_id,
             sidecar_mode=sidecar,
-            config_profile=profile,
+            config_profile=resolved_profile,
         )
         _jprint({
             "status": "ready",
@@ -257,7 +261,7 @@ def main():
             "session_id": session_id,
             "project_dir": project_dir,
             "sidecar_mode": sidecar,
-            "config_profile": profile,
+            "config_profile": resolved_profile,
         })
         return 0
 
@@ -352,7 +356,6 @@ def main():
     except Exception:
         pass
 
-    profile = handoff_config._resolve_profile()
     handoff_db.activate_handoff(
         session_id,
         chat_id_to_activate,
@@ -360,7 +363,7 @@ def main():
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=False,
-        config_profile=profile,
+        config_profile=resolved_profile,
     )
 
     _jprint({

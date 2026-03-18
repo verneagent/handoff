@@ -37,7 +37,7 @@ def main():
         return
 
     # Set active profile from session so config loads use the right profile
-    handoff_config.set_active_profile(session.get("config_profile", "default"))
+    handoff_config.set_profile_from_session(session)
 
     # In sidecar mode, skip compaction warnings (external group, minimal noise)
     if session.get("sidecar_mode", False):

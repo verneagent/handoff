@@ -519,7 +519,7 @@ def main():
         return
 
     # Set active profile from session so config loads use the right profile
-    handoff_config.set_active_profile(session.get("config_profile", "default"))
+    handoff_config.set_profile_from_session(session)
 
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})

@@ -86,7 +86,7 @@ def resolve_session_context():
         raise RuntimeError(f"No active session for {session_id}")
 
     # Set profile before loading credentials so the correct config file is used
-    handoff_config.set_active_profile(session.get("config_profile", "default"))
+    handoff_config.set_profile_from_session(session)
 
     credentials = handoff_config.load_credentials()
     if not credentials:
