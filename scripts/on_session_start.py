@@ -21,8 +21,38 @@ sys.path.insert(0, SCRIPT_DIR)
 import handoff_db
 
 
+_LOG_FILE = os.path.join(
+    os.environ.get("HANDOFF_TMP_DIR") or "/tmp/handoff",
+    "session-start.log",
+)
+
+
+def _log(msg):
+    """Write to persistent log file for post-mortem diagnosis."""
+    try:
+        os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
+        try:
+            if os.path.getsize(_LOG_FILE) > 256 * 1024:
+                with open(_LOG_FILE, "rb") as f:
+                    f.seek(-128 * 1024, 2)
+                    tail = f.read()
+                nl = tail.find(b"\n")
+                if nl >= 0:
+                    tail = tail[nl + 1 :]
+                with open(_LOG_FILE, "wb") as f:
+                    f.write(tail)
+        except Exception:
+            pass
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        with open(_LOG_FILE, "a") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
 def warn(msg):
     print(f"[handoff] {msg}", file=sys.stderr)
+    _log(msg)
 
 
 def main():
@@ -38,6 +68,18 @@ def main():
     # Persist session_id and project dir as env vars for subsequent Bash commands
     env_file = os.environ.get("CLAUDE_ENV_FILE")
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    _log(f"env_file={env_file!r} project_dir={project_dir!r} session_id={session_id!r}")
+
+    # Log existing env file contents before overwriting
+    if env_file and os.path.exists(env_file):
+        try:
+            with open(env_file) as f:
+                old_content = f.read().strip()
+            if old_content:
+                _log(f"env_file BEFORE overwrite: {old_content!r}")
+        except Exception:
+            pass
+
     if env_file and session_id:
         try:
             managed_prefixes = (
@@ -59,6 +101,7 @@ def main():
                 lines.append(f"export HANDOFF_PROJECT_DIR={shlex.quote(project_dir)}\n")
             with open(env_file, "w") as f:
                 f.writelines(lines)
+            _log(f"env_file AFTER write: wrote HANDOFF_SESSION_ID={session_id}")
         except Exception as e:
             warn(f"failed to persist env vars to env file: {e}")
 

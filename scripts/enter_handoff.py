@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
@@ -43,32 +44,21 @@ def _jprint(obj):
     print(json.dumps(obj, ensure_ascii=True))
 
 
-def _get_ancestors(depth=3):
-    """Return ancestor PIDs up to `depth` levels above this process.
+_RESOLVE_LOG = os.path.join(
+    os.environ.get("HANDOFF_TMP_DIR") or "/tmp/handoff",
+    "enter-handoff.log",
+)
 
-    Walks up: enter_handoff.py → bash → Claude Code → ...
-    Returns a set of PIDs. The Claude Code PID will be somewhere in this set,
-    regardless of whether the process tree has intermediate shells.
-    """
-    import subprocess as _sp
-    ancestors = []
-    pid = os.getpid()
-    for _ in range(depth):
-        try:
-            ppid = os.getppid() if pid == os.getpid() else int(
-                _sp.run(
-                    ["ps", "-o", "ppid=", "-p", str(pid)],
-                    capture_output=True, text=True,
-                ).stdout.strip()
-            )
-            if ppid > 1:
-                ancestors.append(ppid)
-                pid = ppid
-            else:
-                break
-        except Exception:
-            break
-    return set(ancestors)
+
+def _log_resolve(msg):
+    """Write to persistent log file for debugging session_id resolution."""
+    try:
+        os.makedirs(os.path.dirname(_RESOLVE_LOG), exist_ok=True)
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        with open(_RESOLVE_LOG, "a") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 
 def _resolve_env():
@@ -93,30 +83,15 @@ def _resolve_env():
         fallback = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
         os.environ["HANDOFF_PROJECT_DIR"] = fallback
 
-    # HANDOFF_SESSION_ID — find session file with matching ancestor PIDs
-    if not os.environ.get("HANDOFF_SESSION_ID"):
-        # Use a fixed path, NOT $TMPDIR. Hooks get the system TMPDIR
-        # (/var/folders/...) while Bash tool calls get /tmp/claude — they'd
-        # write/read different directories. /private/tmp/claude-{uid}/ is in
-        # the sandbox write allowlist and works from both contexts.
-        sessions_dir = f"/private/tmp/claude-{os.getuid()}/handoff-sessions"
-        if os.path.isdir(sessions_dir):
-            try:
-                my_ancestors = _get_ancestors()
-                for fname in os.listdir(sessions_dir):
-                    if not fname.endswith(".json"):
-                        continue
-                    try:
-                        with open(os.path.join(sessions_dir, fname)) as f:
-                            data = json.load(f)
-                        stored = set(data.get("ancestors", []))
-                        if my_ancestors and stored and my_ancestors & stored:
-                            os.environ["HANDOFF_SESSION_ID"] = data["session_id"]
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+    # HANDOFF_SESSION_ID — must come from CLAUDE_ENV_FILE (set by on_session_start hook).
+    # The ancestor PID fallback was removed because it is unreliable: after context
+    # compaction Claude Code may assign a new session_id without re-firing SessionStart,
+    # causing the PID-based lookup to match the wrong (stale) cache entry.
+    sid = os.environ.get("HANDOFF_SESSION_ID", "")
+    if sid:
+        _log_resolve(f"HANDOFF_SESSION_ID from env: {sid}")
+    else:
+        _log_resolve("HANDOFF_SESSION_ID NOT in env — CLAUDE_ENV_FILE may not have been sourced")
 
     missing = [v for v in ("HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_ID", "HANDOFF_SESSION_TOOL")
                if not os.environ.get(v)]
