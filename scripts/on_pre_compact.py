@@ -32,7 +32,7 @@ def main():
     if not session_id:
         return
 
-    session = handoff_db.get_session(session_id)
+    session = handoff_db.resolve_session(session_id)
     if not session:
         return
 

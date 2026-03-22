@@ -171,7 +171,7 @@ def resolve_permission_context(lark_im_mod, session_id):
     if not session_id:
         return {"ok": False, "error": "no_session_id"}
 
-    session = handoff_db.get_session(session_id)
+    session = handoff_db.resolve_session(session_id)
     if not session:
         return {"ok": False, "error": "inactive"}
 

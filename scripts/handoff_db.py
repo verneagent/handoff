@@ -362,6 +362,74 @@ def unregister_session(session_id):
         conn.close()
 
 
+def resolve_session(hook_session_id):
+    """Resolve a session by ID, handling post-compaction session_id changes.
+
+    After Claude Code context compaction, the session_id in hook_input may
+    differ from the one in the DB (registered at handoff activation). This
+    function detects the mismatch and updates the DB atomically.
+
+    Resolution order:
+    1. Direct lookup by hook_session_id
+    2. If not found, check HANDOFF_SESSION_ID env var (set by SessionStart
+       hook at activation time — survives compaction because the env file
+       is not rewritten)
+    3. If env var differs and that session exists, update the DB record
+       to use the new hook_session_id
+
+    Returns dict (same as get_session) or None.
+    """
+    session = get_session(hook_session_id)
+    if session:
+        return session
+
+    # Compaction fallback: env var has the original session_id
+    env_sid = os.environ.get("HANDOFF_SESSION_ID", "").strip()
+    if not env_sid or env_sid == hook_session_id:
+        return None
+
+    session = get_session(env_sid)
+    if not session:
+        return None
+
+    # Found the original session — adopt the new session_id
+    conn = _get_db()
+    try:
+        conn.execute(
+            "UPDATE sessions SET session_id = ? WHERE session_id = ?",
+            (hook_session_id, env_sid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Update the env file so future hooks use the new session_id directly
+    env_file = os.environ.get("CLAUDE_ENV_FILE", "")
+    if env_file and os.path.exists(env_file):
+        try:
+            import shlex
+            import tempfile as _tf
+            with open(env_file) as f:
+                lines = [
+                    l if not l.startswith("export HANDOFF_SESSION_ID=")
+                    else f"export HANDOFF_SESSION_ID={shlex.quote(hook_session_id)}\n"
+                    for l in f.readlines()
+                ]
+            dir_name = os.path.dirname(env_file) or "."
+            fd, tmp = _tf.mkstemp(dir=dir_name)
+            with os.fdopen(fd, "w") as f:
+                f.writelines(lines)
+            os.rename(tmp, env_file)
+        except Exception:
+            pass
+
+    # Also update the in-process env var
+    os.environ["HANDOFF_SESSION_ID"] = hook_session_id
+
+    # Re-read with the updated session_id
+    return get_session(hook_session_id)
+
+
 def get_session(session_id):
     """Look up a session by ID. Returns dict or None.
 
