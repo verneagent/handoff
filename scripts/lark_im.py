@@ -20,7 +20,7 @@ from handoff_config import (
     CONFIG_FILE,
     handoff_tmp_dir,
 )
-from handoff_db import get_session
+from handoff_db import get_session, resolve_session
 
 BASE_URL = "https://open.larksuite.com/open-apis"
 
@@ -81,7 +81,7 @@ def resolve_session_context():
     if not session_id:
         raise RuntimeError("HANDOFF_SESSION_ID is not set")
 
-    session = get_session(session_id)
+    session = resolve_session(session_id)
     if not session:
         raise RuntimeError(f"No active session for {session_id}")
 

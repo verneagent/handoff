@@ -41,7 +41,7 @@ def main():
 
     # Check if this session has an active handoff
     session_id = hook_input.get("session_id", "")
-    session = handoff_db.get_session(session_id) if session_id else None
+    session = handoff_db.resolve_session(session_id) if session_id else None
     if not session:
         return
 

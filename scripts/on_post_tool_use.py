@@ -613,8 +613,8 @@ def main():
     if not session_id:
         return
 
-    # Check for active handoff
-    session = handoff_db.get_session(session_id)
+    # Check for active handoff (resolve_session handles post-compaction session_id changes)
+    session = handoff_db.resolve_session(session_id)
     if not session:
         return
 
