@@ -75,21 +75,22 @@ def resolve_session_context():
     Raises:
         RuntimeError: on any missing or invalid state.
     """
-    from handoff_config import load_credentials
-
-    credentials = load_credentials()
-    if not credentials:
-        raise RuntimeError("No credentials configured")
+    import handoff_config
 
     session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     if not session_id:
         raise RuntimeError("HANDOFF_SESSION_ID is not set")
 
-    token = get_tenant_token(credentials["app_id"], credentials["app_secret"])
-
     session = get_session(session_id)
     if not session:
         raise RuntimeError(f"No active session for {session_id}")
+
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
+    if not credentials:
+        raise RuntimeError("No credentials configured")
+
+    token = get_tenant_token(credentials["app_id"], credentials["app_secret"])
 
     chat_id = session.get("chat_id")
     if not chat_id:

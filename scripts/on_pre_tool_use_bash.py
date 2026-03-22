@@ -46,11 +46,12 @@ def _check_worker_stop():
         if not chat_id:
             return False
 
-        worker_url = handoff_config.load_worker_url()
+        profile = session.get("config_profile", "default")
+        worker_url = handoff_config.load_worker_url(profile=profile)
         if not worker_url:
             return False
 
-        api_key = handoff_config.load_api_key()
+        api_key = handoff_config.load_api_key(profile=profile)
         if not api_key:
             return False
 

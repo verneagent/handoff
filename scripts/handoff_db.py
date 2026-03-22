@@ -47,6 +47,7 @@ _SESSIONS_COLS = {
     "bot_open_id",
     "sidecar_mode",
     "guests",
+    "config_profile",
 }
 _CHAT_PREFS_COLS = {
     "chat_id",
@@ -114,7 +115,8 @@ def _get_db():
             "  operator_open_id TEXT NOT NULL DEFAULT '',"
             "  bot_open_id TEXT NOT NULL DEFAULT '',"
             "  sidecar_mode INTEGER NOT NULL DEFAULT 0,"
-            "  guests TEXT NOT NULL DEFAULT '[]'"
+            "  guests TEXT NOT NULL DEFAULT '[]',"
+            "  config_profile TEXT NOT NULL DEFAULT 'default'"
             ")"
         )
         conn.execute(
@@ -161,7 +163,8 @@ def _normalize_session_tool():
 
 
 def try_claim_chat(session_id, chat_id, session_model,
-                   operator_open_id="", bot_open_id="", sidecar_mode=False):
+                   operator_open_id="", bot_open_id="", sidecar_mode=False,
+                   config_profile="default"):
     """Atomically claim a chat for a session.
 
     Returns (ok, owner_session_id).
@@ -185,11 +188,11 @@ def try_claim_chat(session_id, chat_id, session_model,
         conn.execute(
             "INSERT INTO sessions"
             " (session_id, chat_id, session_tool, session_model, activated_at,"
-            "  operator_open_id, bot_open_id, sidecar_mode, guests)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  operator_open_id, bot_open_id, sidecar_mode, guests, config_profile)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, chat_id, tool, session_model, int(time.time()),
              operator_open_id or "", bot_open_id or "",
-             1 if sidecar_mode else 0, "[]"),
+             1 if sidecar_mode else 0, "[]", config_profile or "default"),
         )
         conn.execute("COMMIT")
         return True, session_id
@@ -211,7 +214,8 @@ def try_claim_chat(session_id, chat_id, session_model,
 
 
 def register_session(session_id, chat_id, session_model,
-                     operator_open_id="", bot_open_id="", sidecar_mode=False):
+                     operator_open_id="", bot_open_id="", sidecar_mode=False,
+                     config_profile="default"):
     """Register a handoff session in the local database."""
     ok, owner = try_claim_chat(
         session_id, chat_id,
@@ -219,6 +223,7 @@ def register_session(session_id, chat_id, session_model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=sidecar_mode,
+        config_profile=config_profile,
     )
     if not ok:
         raise RuntimeError(f"chat_id {chat_id} is already owned by session {owner}")
@@ -247,6 +252,7 @@ def takeover_chat(
     operator_open_id="",
     bot_open_id="",
     sidecar_mode=False,
+    config_profile="default",
 ):
     """Atomically take over a chat for the given session.
 
@@ -295,11 +301,11 @@ def takeover_chat(
         conn.execute(
             "INSERT INTO sessions"
             " (session_id, chat_id, session_tool, session_model, activated_at,"
-            "  operator_open_id, bot_open_id, sidecar_mode, guests)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  operator_open_id, bot_open_id, sidecar_mode, guests, config_profile)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, chat_id, tool, session_model, int(time.time()),
              operator_open_id or "", bot_open_id or "",
-             1 if sidecar_mode else 0, "[]"),
+             1 if sidecar_mode else 0, "[]", config_profile or "default"),
         )
         conn.execute("COMMIT")
         return True, session_id, replaced_owner
@@ -380,6 +386,7 @@ def get_session(session_id):
             " , s.sidecar_mode"
             " , s.guests"
             " , p.autoapprove"
+            " , s.config_profile"
             " FROM sessions s"
             " LEFT JOIN chat_preferences p ON s.chat_id = p.chat_id"
             " WHERE s.session_id = ?",
@@ -404,6 +411,7 @@ def get_session(session_id):
                 "sidecar_mode": bool(row[9]),
                 "guests": guests,
                 "autoapprove": bool(row[11]),
+                "config_profile": row[12] or "default",
             }
         return None
     finally:
@@ -661,7 +669,7 @@ def get_active_sessions():
         rows = conn.execute(
             "SELECT session_id, chat_id, last_checked, activated_at,"
             " session_tool, session_model, operator_open_id, bot_open_id,"
-            " sidecar_mode"
+            " sidecar_mode, config_profile"
             " FROM sessions",
         ).fetchall()
         return [
@@ -675,6 +683,7 @@ def get_active_sessions():
                 "operator_open_id": r[6] or "",
                 "bot_open_id": r[7] or "",
                 "sidecar_mode": bool(r[8]),
+                "config_profile": r[9] or "default",
             }
             for r in rows
         ]
@@ -715,7 +724,7 @@ def set_session_last_checked(session_id, ts):
 
 
 def activate_handoff(session_id, chat_id, session_model, operator_open_id="",
-                     bot_open_id="", sidecar_mode=False):
+                     bot_open_id="", sidecar_mode=False, config_profile="default"):
     """Activate handoff for a session (local DB only)."""
     register_session(
         session_id, chat_id,
@@ -723,6 +732,7 @@ def activate_handoff(session_id, chat_id, session_model, operator_open_id="",
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=sidecar_mode,
+        config_profile=config_profile,
     )
 
 

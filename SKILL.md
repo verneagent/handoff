@@ -113,6 +113,9 @@ This skill supports sub-commands via arguments:
 - **`/handoff clear`** — Delete the current project's chat group and handoff database. Ask for confirmation first. **CLI only** — cannot run during handoff mode.
 - **`/handoff diag [--mode ws|http|both] [--chat-id ID] [--timeout N]`** — Run a permission bridge diagnostic: send a test card with buttons, poll for the response, and report whether the round-trip works. Default mode is `ws`. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff sidecar`** — Enter **sidecar mode**: join an existing external Lark group (not created by the bot) and only respond to bot-directed messages (@-mention, reply to bot message, or reaction/sticker). Uses the same handoff loop but filters messages and skips group modifications.
+- **`/handoff profile`** — List all config profiles (default + any in `~/.handoff/profiles/`). Shows which is current and which is the default. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff profile show`** — Show the current profile name and config file path. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff profile set-default <name>`** — Set the default config profile. Writes to `~/.handoff/default_profile`. Do NOT enter Handoff mode. Safe to run anytime.
 
 Parse the argument string to determine which sub-command to execute.
 
@@ -145,7 +148,7 @@ If you find yourself outside the loop during active handoff, re-read this file a
 The workspace ID is `{machine}-{folder}`, where `folder` is derived from `HANDOFF_PROJECT_DIR` (falling back to cwd). Example: `MacBookPro-Users-alice-projects-myapp`. Computed by `lark_im.get_workspace_id()`, it identifies the physical code location (machine + folder path) and is stored in the Lark group description as `workspace:{id}`.
 
 Handoff data is stored in a single SQLite database at `~/.handoff/projects/{project}/handoff-data.db`. The database uses WAL mode for safe concurrent access (hooks and main process). It contains:
-- **`sessions` table** — Per-session handoff state: `session_id` (PK), `chat_id` (unique), `session_tool`, `session_model`, `last_checked`, `activated_at`, `operator_open_id` (resolved from config email at activation — filters to operator's messages only), `bot_open_id` (resolved from bot info at activation — used for sidecar-mode interaction filtering), `sidecar_mode` (1 if sidecar mode, 0 otherwise — scripts read this from the session instead of requiring a CLI flag).
+- **`sessions` table** — Per-session handoff state: `session_id` (PK), `chat_id` (unique), `session_tool`, `session_model`, `last_checked`, `activated_at`, `operator_open_id` (resolved from config email at activation — filters to operator's messages only), `bot_open_id` (resolved from bot info at activation — used for sidecar-mode interaction filtering), `sidecar_mode` (1 if sidecar mode, 0 otherwise — scripts read this from the session instead of requiring a CLI flag), `config_profile` (name of the config profile used to activate — hooks read this from the session to load the correct credentials).
 - **`messages` table** — Message history for both directions (`direction=sent|received`) with `message_id`, `source_message_id`, `chat_id`, `message_time`, `text`, `title`, `sent_at`.
 
 ## Help (`/handoff help`)
@@ -168,6 +171,9 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff clear` | Delete current project's chat group and database (CLI only) |
 | `/handoff sidecar` | Sidecar mode: join external group, respond to @-mentions only |
 | `/handoff diag` | Run permission bridge diagnostic (test card action → poll round-trip) |
+| `/handoff profile` | List all config profiles |
+| `/handoff profile show` | Show current profile details |
+| `/handoff profile set-default <name>` | Set the default config profile |
 
 ## Preflight Check
 

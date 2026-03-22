@@ -60,7 +60,8 @@ def main():
         return
 
     # Send notification to Lark
-    credentials = handoff_config.load_credentials()
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         return
 

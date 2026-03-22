@@ -12,6 +12,8 @@ When invoked via `/handoff init`: run ALL steps. For each step where a value alr
 
 **Deferred save:** During Steps 1–4, do NOT write to the config file or hooks files. Collect all values in memory. Infrastructure side effects (worker deploy, wrangler secrets) happen inline since they can't be deferred. After Step 4, show a summary and ask for confirmation before applying (see "After setup").
 
+**Profile support:** If the user invokes `/handoff init --profile <name>`, pass the profile through to all `save_credentials(profile=<name>)` calls and `preflight.py --profile <name>`. Named profiles store config at `~/.handoff/profiles/<name>.json` instead of the default `~/.handoff/config.json`. If no `--profile` is specified, use the resolved default (env var → default_profile file → "default").
+
 ## Before you begin: load existing values
 
 **Before** starting Step 1, run this command to load any existing config values:

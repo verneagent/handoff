@@ -182,7 +182,8 @@ def resolve_permission_context(lark_im_mod, session_id):
     if not handoff_config.is_valid_chat_id(chat_id):
         return {"ok": False, "error": "invalid_chat_id"}
 
-    credentials = handoff_config.load_credentials()
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         return {"ok": False, "error": "no_credentials", "chat_id": chat_id}
 
@@ -199,7 +200,7 @@ def resolve_permission_context(lark_im_mod, session_id):
             "chat_id": chat_id,
         }
 
-    worker_url = handoff_config.load_worker_url()
+    worker_url = handoff_config.load_worker_url(profile=profile)
     if not worker_url:
         return {
             "ok": False,

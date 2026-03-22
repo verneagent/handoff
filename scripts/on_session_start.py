@@ -86,6 +86,7 @@ def main():
                 "export HANDOFF_SESSION_ID=",
                 "export HANDOFF_SESSION_TOOL=",
                 "export HANDOFF_PROJECT_DIR=",
+                "export HANDOFF_PROFILE=",
             )
             lines = []
             if os.path.exists(env_file):
@@ -99,6 +100,12 @@ def main():
             lines.append(f"export HANDOFF_SESSION_TOOL={shlex.quote('Claude Code')}\n")
             if project_dir:
                 lines.append(f"export HANDOFF_PROJECT_DIR={shlex.quote(project_dir)}\n")
+            # Preserve HANDOFF_PROFILE if the session has a non-default profile
+            session = handoff_db.get_session(session_id)
+            if session:
+                profile = session.get("config_profile", "default")
+                if profile and profile != "default":
+                    lines.append(f"export HANDOFF_PROFILE={shlex.quote(profile)}\n")
             with open(env_file, "w") as f:
                 f.writelines(lines)
             _log(f"env_file AFTER write: wrote HANDOFF_SESSION_ID={session_id}")

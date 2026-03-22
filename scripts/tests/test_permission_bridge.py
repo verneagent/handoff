@@ -267,7 +267,7 @@ class MainTest(unittest.TestCase):
 
     def test_no_credentials_denies(self):
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: None
+        permission_core.handoff_config.load_credentials = lambda **kw: None
         output, exit_code = self._run_main(
             {"tool_name": "Bash", "tool_input": {}, "session_id": "s1"}
         )
@@ -278,11 +278,11 @@ class MainTest(unittest.TestCase):
     def test_allow_decision(self):
         """Full allow flow: session active → card sent → user approves."""
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: {
+        permission_core.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         permission_bridge.lark_im.get_tenant_token = lambda a, b: "tok"
-        permission_core.handoff_config.load_worker_url = lambda: "https://w.example"
+        permission_core.handoff_config.load_worker_url = lambda **kw: "https://w.example"
         permission_bridge.handoff_worker.ack_worker_replies = lambda *a, **kw: None
         permission_bridge.lark_im.send_message = lambda *a, **kw: "msg-1"
         permission_bridge.lark_im.build_card = lambda *a, **kw: {}
@@ -303,11 +303,11 @@ class MainTest(unittest.TestCase):
 
     def test_deny_decision(self):
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: {
+        permission_core.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         permission_bridge.lark_im.get_tenant_token = lambda a, b: "tok"
-        permission_core.handoff_config.load_worker_url = lambda: "https://w.example"
+        permission_core.handoff_config.load_worker_url = lambda **kw: "https://w.example"
         permission_bridge.handoff_worker.ack_worker_replies = lambda *a, **kw: None
         permission_bridge.lark_im.send_message = lambda *a, **kw: "msg-1"
         permission_bridge.lark_im.build_card = lambda *a, **kw: {}
@@ -329,11 +329,11 @@ class MainTest(unittest.TestCase):
     def test_always_decision_passes_updated_permissions(self):
         """'Approve All' returns allow + updatedPermissions from suggestions."""
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: {
+        permission_core.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         permission_bridge.lark_im.get_tenant_token = lambda a, b: "tok"
-        permission_core.handoff_config.load_worker_url = lambda: "https://w.example"
+        permission_core.handoff_config.load_worker_url = lambda **kw: "https://w.example"
         permission_bridge.handoff_worker.ack_worker_replies = lambda *a, **kw: None
         permission_bridge.lark_im.send_message = lambda *a, **kw: "msg-1"
         permission_bridge.lark_im.build_card = lambda *a, **kw: {}
@@ -363,11 +363,11 @@ class MainTest(unittest.TestCase):
     def test_always_decision_without_suggestions(self):
         """'Approve All' without suggestions still returns allow (no updatedPermissions)."""
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: {
+        permission_core.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         permission_bridge.lark_im.get_tenant_token = lambda a, b: "tok"
-        permission_core.handoff_config.load_worker_url = lambda: "https://w.example"
+        permission_core.handoff_config.load_worker_url = lambda **kw: "https://w.example"
         permission_bridge.handoff_worker.ack_worker_replies = lambda *a, **kw: None
         permission_bridge.lark_im.send_message = lambda *a, **kw: "msg-1"
         permission_bridge.lark_im.build_card = lambda *a, **kw: {}
@@ -392,11 +392,11 @@ class MainTest(unittest.TestCase):
 
     def test_card_send_failure_denies(self):
         permission_core.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        permission_core.handoff_config.load_credentials = lambda: {
+        permission_core.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         permission_bridge.lark_im.get_tenant_token = lambda a, b: "tok"
-        permission_core.handoff_config.load_worker_url = lambda: "https://w.example"
+        permission_core.handoff_config.load_worker_url = lambda **kw: "https://w.example"
         permission_bridge.handoff_worker.ack_worker_replies = lambda *a, **kw: None
         permission_bridge.lark_im.build_card = lambda *a, **kw: {}
 

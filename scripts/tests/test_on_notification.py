@@ -102,7 +102,7 @@ class OnNotificationTest(unittest.TestCase):
         """Normal notification type sends a markdown card to Lark."""
         sent = []
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         on_notification.lark_im.get_tenant_token = lambda a, b: "tok"
@@ -128,7 +128,7 @@ class OnNotificationTest(unittest.TestCase):
 
     def test_elicitation_dialog_uses_purple(self):
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         on_notification.lark_im.get_tenant_token = lambda a, b: "tok"
@@ -151,7 +151,7 @@ class OnNotificationTest(unittest.TestCase):
 
     def test_no_credentials_returns_silently(self):
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: None
+        on_notification.handoff_config.load_credentials = lambda **kw: None
         sent = []
         on_notification.lark_im.send_message = lambda *a, **kw: sent.append(1)
 
@@ -164,7 +164,7 @@ class OnNotificationTest(unittest.TestCase):
 
     def test_token_error_returns_silently(self):
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
 
@@ -185,7 +185,7 @@ class OnNotificationTest(unittest.TestCase):
 
     def test_send_failure_logs_to_stderr(self):
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         on_notification.lark_im.get_tenant_token = lambda a, b: "tok"
@@ -206,7 +206,7 @@ class OnNotificationTest(unittest.TestCase):
 
     def test_record_failure_does_not_crash(self):
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         on_notification.lark_im.get_tenant_token = lambda a, b: "tok"
@@ -247,7 +247,7 @@ class OnNotificationTest(unittest.TestCase):
     def test_default_message(self):
         """Missing message field uses default text."""
         on_notification.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_notification.handoff_config.load_credentials = lambda: {
+        on_notification.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "b"
         }
         on_notification.lark_im.get_tenant_token = lambda a, b: "tok"

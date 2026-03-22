@@ -13,6 +13,7 @@ import sys
 HANDOFF_HOME = os.path.expanduser("~/.handoff")
 _CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]+$")
 _CHAT_ID_MAX_LEN = 128
+_PROFILE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def is_valid_chat_id(chat_id):
@@ -33,6 +34,106 @@ def default_config_file():
 
 
 CONFIG_FILE = default_config_file()
+
+
+# ---------------------------------------------------------------------------
+# Profile support
+# ---------------------------------------------------------------------------
+
+
+def validate_profile_name(name):
+    """Raise ValueError if *name* is not a valid profile identifier."""
+    if not name or not isinstance(name, str):
+        raise ValueError(f"Invalid profile name: {name!r}")
+    if not _PROFILE_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid profile name: {name!r} — "
+            "must contain only letters, digits, hyphens, and underscores"
+        )
+    return name
+
+
+def get_default_profile():
+    """Read the default profile name from ~/.handoff/default_profile.
+
+    Returns the profile name string, or None if the file does not exist.
+    """
+    path = os.path.join(HANDOFF_HOME, "default_profile")
+    try:
+        with open(path) as f:
+            name = f.read().strip()
+        if name:
+            validate_profile_name(name)
+            return name
+    except (FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def set_default_profile(name):
+    """Write the default profile name to ~/.handoff/default_profile."""
+    validate_profile_name(name)
+    path = os.path.join(HANDOFF_HOME, "default_profile")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(name + "\n")
+
+
+def resolve_profile(explicit=None):
+    """Resolve the active profile name.
+
+    Resolution chain (first non-empty wins):
+      1. *explicit* argument
+      2. HANDOFF_PROFILE environment variable
+      3. ~/.handoff/default_profile file
+      4. "default"
+
+    This is a pure function — it reads from its arguments, env vars, and
+    files, never from module-level state.
+    """
+    if explicit:
+        validate_profile_name(explicit)
+        return explicit
+    env = os.environ.get("HANDOFF_PROFILE", "").strip()
+    if env:
+        validate_profile_name(env)
+        return env
+    file_default = get_default_profile()
+    if file_default:
+        return file_default
+    return "default"
+
+
+def config_path(profile="default"):
+    """Return the config file path for a given profile.
+
+    "default" → ~/.handoff/config.json
+    Others   → ~/.handoff/profiles/<name>.json
+    """
+    validate_profile_name(profile)
+    if profile == "default":
+        return os.path.join(HANDOFF_HOME, "config.json")
+    return os.path.join(HANDOFF_HOME, "profiles", f"{profile}.json")
+
+
+def list_profiles():
+    """List all available profile names. Always includes "default"."""
+    profiles = set()
+    if os.path.exists(os.path.join(HANDOFF_HOME, "config.json")):
+        profiles.add("default")
+    profiles_dir = os.path.join(HANDOFF_HOME, "profiles")
+    if os.path.isdir(profiles_dir):
+        for fname in os.listdir(profiles_dir):
+            if fname.endswith(".json"):
+                name = fname[:-5]
+                try:
+                    validate_profile_name(name)
+                    profiles.add(name)
+                except ValueError:
+                    pass
+    # Always include "default" even if config.json doesn't exist yet
+    profiles.add("default")
+    return sorted(profiles)
 
 
 def _require_project_dir():
@@ -152,10 +253,15 @@ def default_poll_timeout(session):
 # ---------------------------------------------------------------------------
 
 
-def _load_config():
-    """Read raw JSON from CONFIG_FILE. Returns dict or None on error."""
+def _load_config(profile=None):
+    """Read raw JSON from the config file for *profile*.
+
+    When *profile* is None, resolve_profile() determines which config to load.
+    Returns dict or None on error.
+    """
+    path = config_path(resolve_profile(profile))
     try:
-        with open(CONFIG_FILE) as f:
+        with open(path) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
@@ -183,35 +289,35 @@ def _resolve_im_config(raw):
     return im_cfg
 
 
-def load_credentials():
+def load_credentials(profile=None):
     """Load app_id, app_secret, email from config file.
 
     Returns the config dict, or None if the file doesn't exist or
     required fields (app_id, app_secret) are missing.
     """
-    return _resolve_im_config(_load_config())
+    return _resolve_im_config(_load_config(profile))
 
 
-def load_worker_url():
+def load_worker_url(profile=None):
     """Load the Cloudflare Worker URL from config. Returns None if missing."""
-    raw = _load_config()
+    raw = _load_config(profile)
     if raw is None:
         return None
     url = raw.get("worker_url", "").strip()
     return url or None
 
 
-def load_api_key():
+def load_api_key(profile=None):
     """Load the Worker API key from config. Returns None if not set."""
-    raw = _load_config()
+    raw = _load_config(profile)
     if raw is None:
         return None
     return raw.get("worker_api_key", "").strip() or None
 
 
-def _worker_auth_headers():
+def _worker_auth_headers(profile=None):
     """Return curl args for Worker API auth. Empty list if no key configured."""
-    key = load_api_key()
+    key = load_api_key(profile)
     if key:
         return ["-H", f"Authorization: Bearer {key}"]
     return []
@@ -223,13 +329,14 @@ def save_credentials(
     email=None,
     worker_url=None,
     worker_api_key=None,
+    profile=None,
 ):
-    """Save credentials to the config file.
+    """Save credentials to the config file for *profile*.
 
     IM-specific fields (app_id, app_secret, email) go under ims.lark;
     infrastructure fields (worker_url, worker_api_key) stay top-level.
     """
-    target = default_config_file()
+    target = config_path(resolve_profile(profile))
     raw = {}
     if os.path.exists(target):
         try:
