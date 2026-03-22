@@ -169,3 +169,19 @@ python3 -m unittest discover -s .claude/skills/handoff/scripts/tests -p 'test_*.
 ```bash
 python3 -m py_compile .claude/skills/handoff/scripts/*.py .claude/skills/handoff/scripts/tests/test_*.py
 ```
+
+## Upgrade (`/handoff upgrade`)
+
+Download the latest version from GitHub and install it:
+
+```bash
+python3 .claude/skills/handoff/scripts/upgrade.py
+```
+
+Check for updates without installing:
+
+```bash
+python3 .claude/skills/handoff/scripts/upgrade.py --check
+```
+
+The script auto-detects the install directory (resolves symlinks), downloads the latest code, syncs files, and reinstalls hooks if `hooks.json` changed. Print the output to the user. Do NOT enter Handoff mode.

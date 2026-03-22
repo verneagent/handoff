@@ -113,6 +113,8 @@ This skill supports sub-commands via arguments:
 - **`/handoff clear`** — Delete the current project's chat group and handoff database. Ask for confirmation first. **CLI only** — cannot run during handoff mode.
 - **`/handoff diag [--mode ws|http|both] [--chat-id ID] [--timeout N]`** — Run a permission bridge diagnostic: send a test card with buttons, poll for the response, and report whether the round-trip works. Default mode is `ws`. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff sidecar`** — Enter **sidecar mode**: join an existing external Lark group (not created by the bot) and only respond to bot-directed messages (@-mention, reply to bot message, or reaction/sticker). Uses the same handoff loop but filters messages and skips group modifications.
+- **`/handoff upgrade`** — Download the latest version from GitHub and install it. Reinstalls hooks if `hooks.json` changed. Reports what files were updated. Safe to run anytime. Can also run during handoff mode.
+- **`/handoff upgrade --check`** — Check if an update is available without installing. Safe to run anytime.
 
 Parse the argument string to determine which sub-command to execute.
 
@@ -168,6 +170,8 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff clear` | Delete current project's chat group and database (CLI only) |
 | `/handoff sidecar` | Sidecar mode: join external group, respond to @-mentions only |
 | `/handoff diag` | Run permission bridge diagnostic (test card action → poll round-trip) |
+| `/handoff upgrade` | Download and install the latest version from GitHub |
+| `/handoff upgrade --check` | Check if an update is available |
 
 ## Preflight Check
 
