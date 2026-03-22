@@ -10,65 +10,8 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-import handoff_config
-import handoff_db
-import lark_im
+import handoff_lifecycle
 import script_utils
-
-
-def _reset_working_state():
-    """Update the 'Working...' card to 'Done ✓' and clear state/stop flag.
-
-    Without this, handback leaves a stale 'Working...' card in the chat because
-    end_and_cleanup sends via handoff_ops (not send_to_group.send()) which
-    bypasses the normal reset path.
-    """
-    import fcntl
-    import time as _time
-
-    session_id = os.environ.get("HANDOFF_SESSION_ID", "")
-    if not session_id:
-        return
-
-    tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
-    os.makedirs(tmp_dir, exist_ok=True)
-    lock_path = os.path.join(tmp_dir, f"working-{session_id}.lock")
-
-    with open(lock_path, "w") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        try:
-            msg_id = handoff_db.get_working_message(session_id)
-            if msg_id:
-                try:
-                    _session = handoff_db.get_session(session_id)
-                    _profile = _session.get("config_profile", "default") if _session else "default"
-                    credentials = handoff_config.load_credentials(profile=_profile)
-                    if credentials:
-                        token = lark_im.get_tenant_token(
-                            credentials["app_id"], credentials["app_secret"],
-                        )
-                        _, created_at, _ = handoff_db.get_working_state(session_id)
-                        elapsed = int(_time.time()) - created_at if created_at else 0
-                        if elapsed < 60:
-                            body = f"Completed in {elapsed}s"
-                        else:
-                            mins = elapsed // 60
-                            secs = elapsed % 60
-                            body = f"Completed in {mins}m {secs}s"
-                        done_card = lark_im.build_card("Done ✓", body=body, color="green")
-                        lark_im.update_card_message(token, msg_id, done_card)
-                except Exception:
-                    pass
-            handoff_db.clear_working_message(session_id)
-        finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
-
-    # Clear stop flag
-    flag_path = os.path.join(tmp_dir, f"stop-{session_id}.flag")
-    try:
-        os.unlink(flag_path)
-    except FileNotFoundError:
-        pass
 
 
 def _load_chat_id_from_deactivate(output: str) -> str:
@@ -99,7 +42,9 @@ def main() -> int:
 
     try:
         # Reset working card to "Done ✓" before sending handback card
-        _reset_working_state()
+        session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+        if session_id:
+            handoff_lifecycle.reset_working_card(session_id)
 
         if not args.skip_card:
             card_args = [

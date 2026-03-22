@@ -33,6 +33,7 @@ sys.path.insert(0, SCRIPT_DIR)
 
 import handoff_config
 import handoff_db
+import handoff_lifecycle
 import lark_im
 
 
@@ -144,19 +145,14 @@ async def main_loop(chat_id, project_dir, model):
     except Exception:
         pass
 
-    handoff_db.activate_handoff(
-        session_id, chat_id, session_model=model,
+    handoff_lifecycle.activate(
+        session_id, chat_id, model,
         operator_open_id=operator_open_id,
     )
     _log(f"Activated session {session_id} for chat {chat_id}")
 
     # Send startup card
-    card = lark_im.build_card(
-        f"Handoff Daemon ({model})",
-        body=f"Project: `{os.path.basename(project_dir)}`\nSession: `{session_id[:8]}`",
-        color="blue",
-    )
-    lark_im.send_message(token, chat_id, card)
+    handoff_lifecycle.handoff_start(session_id, model, tool_name="Daemon", silence=False)
     _log(f"Daemon started. Project: {project_dir}")
 
     agent_session_id = None
@@ -199,16 +195,10 @@ async def main_loop(chat_id, project_dir, model):
 
             # Check for handback
             if user_message.lower().strip() in ("handback", "hand back"):
-                card = lark_im.build_card(
-                    "Daemon Stopped",
-                    body="Handoff daemon has been stopped.",
-                    color="grey",
+                handoff_lifecycle.handoff_end(
+                    session_id, model, tool_name="Daemon",
+                    body="Daemon stopped.", silence=False,
                 )
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"]
-                )
-                lark_im.send_message(token, chat_id, card)
-                handoff_db.deactivate_handoff(session_id)
                 _log("Handback received. Stopped.")
                 running = False
                 break
@@ -240,9 +230,9 @@ async def main_loop(chat_id, project_dir, model):
             _log(f"Loop error: {e}")
             await asyncio.sleep(5)
 
-    # Cleanup
+    # Cleanup (if not already deactivated by handback)
     try:
-        handoff_db.deactivate_handoff(session_id)
+        handoff_lifecycle.deactivate(session_id)
     except Exception:
         pass
     _log("Daemon stopped.")
