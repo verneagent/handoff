@@ -93,7 +93,7 @@ class SendQuotaWarningTest(unittest.TestCase):
 
     def test_sends_card_on_success(self):
         sent = []
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         lark_im.get_tenant_token = lambda a, b: "tok"
         lark_im.send_message = lambda token, chat_id, card: sent.append(
             {"token": token, "chat_id": chat_id, "card": card}
@@ -116,7 +116,7 @@ class SendQuotaWarningTest(unittest.TestCase):
         self.assertIn("quota", card["header"]["title"]["content"].lower())
 
     def test_returns_false_on_no_credentials(self):
-        handoff_config.load_credentials = lambda: None
+        handoff_config.load_credentials = lambda **kw: None
 
         old_stderr = sys.stderr
         sys.stderr = io.StringIO()
@@ -128,7 +128,7 @@ class SendQuotaWarningTest(unittest.TestCase):
         self.assertFalse(result)
 
     def test_returns_false_on_send_error(self):
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         lark_im.get_tenant_token = lambda a, b: "tok"
         lark_im.send_message = lambda *a: (_ for _ in ()).throw(
             Exception("send failed")
@@ -195,7 +195,7 @@ class WaitForReplyQuotaWarningTest(unittest.TestCase):
             "token": "tok", "session_id": "s1", "chat_id": "c1",
             "session": {"chat_id": "c1", "last_checked": "100"},
         }
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_unprocessed_messages = lambda chat_id: []
 
         # WS always fails
@@ -229,7 +229,7 @@ class WaitForReplyQuotaWarningTest(unittest.TestCase):
             "token": "tok", "session_id": "s1", "chat_id": "c1",
             "session": {"chat_id": "c1", "last_checked": "100"},
         }
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_unprocessed_messages = lambda chat_id: []
 
         handoff_worker.poll_worker_ws = lambda *a, **kw: (_ for _ in ()).throw(
@@ -305,7 +305,7 @@ class SendAndWaitQuotaWarningTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
 
         handoff_worker.poll_worker_ws = lambda *a, **kw: (_ for _ in ()).throw(
@@ -336,7 +336,7 @@ class SendAndWaitQuotaWarningTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
 
         handoff_worker.poll_worker_ws = lambda *a, **kw: (_ for _ in ()).throw(

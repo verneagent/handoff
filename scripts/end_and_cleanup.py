@@ -40,7 +40,9 @@ def _reset_working_state():
             msg_id = handoff_db.get_working_message(session_id)
             if msg_id:
                 try:
-                    credentials = handoff_config.load_credentials()
+                    _session = handoff_db.get_session(session_id)
+                    _profile = _session.get("config_profile", "default") if _session else "default"
+                    credentials = handoff_config.load_credentials(profile=_profile)
                     if credentials:
                         token = lark_im.get_tenant_token(
                             credentials["app_id"], credentials["app_secret"],

@@ -110,13 +110,13 @@ def main():
     warn("Response sent. Waiting for next message...")
 
     # --- Wait phase (reuse wait_for_reply logic) ---
-    worker_url = handoff_config.load_worker_url()
+    # Re-read session to get fresh last_checked, operator_open_id, bot_open_id, sidecar_mode, guests
+    session = handoff_db.get_session(session_id)
+    _profile = session.get("config_profile", "default") if session else "default"
+    worker_url = handoff_config.load_worker_url(profile=_profile)
     if not worker_url:
         json.dump({"error": "no_worker_url"}, sys.stdout)
         return
-
-    # Re-read session to get fresh last_checked, operator_open_id, bot_open_id, sidecar_mode, guests
-    session = handoff_db.get_session(session_id)
     since = session.get("last_checked") if session else None
     operator_open_id = session.get("operator_open_id", "") if session else ""
     bot_open_id = session.get("bot_open_id", "") if session else ""

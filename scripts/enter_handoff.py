@@ -100,6 +100,41 @@ def _resolve_env():
     return None
 
 
+def _persist_profile_env(profile):
+    """Persist HANDOFF_PROFILE to CLAUDE_ENV_FILE if non-default.
+
+    Uses atomic write (tempfile + rename) so concurrent readers never see
+    a partial file.
+    """
+    import shlex
+    import tempfile
+
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    if not env_file:
+        return
+    try:
+        lines = []
+        if os.path.exists(env_file):
+            with open(env_file) as f:
+                lines = [l for l in f.readlines()
+                         if not l.startswith("export HANDOFF_PROFILE=")]
+        if profile and profile != "default":
+            lines.append(f"export HANDOFF_PROFILE={shlex.quote(profile)}\n")
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(env_file))
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.writelines(lines)
+            os.rename(tmp, env_file)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        _log_resolve(f"failed to persist HANDOFF_PROFILE: {e}")
+
+
 def _pick_inactive(groups):
     """Return the most recently active inactive group, or first if no timestamps."""
     inactive = [g for g in groups if not g.get("active")]
@@ -127,7 +162,15 @@ def main():
         default=None,
         help="Join a specific group by name (auto-detects sidecar vs regular)",
     )
+    p.add_argument(
+        "--profile",
+        default=None,
+        help="Config profile name (default: resolve from env/file/default)",
+    )
     args = p.parse_args()
+
+    # Resolve profile early — used for all credential loading and DB storage
+    profile = handoff_config.resolve_profile(explicit=args.profile)
 
     # Verify required env vars are present (proves SessionStart hook ran)
     marker = f"/private/tmp/claude-{os.getuid()}/handoff-hooks-pending"
@@ -164,7 +207,7 @@ def main():
         return 0
 
     # ── Credentials (shared by all paths) ────────────────────────────────
-    creds = handoff_config.load_credentials()
+    creds = handoff_config.load_credentials(profile=profile)
     if not creds:
         _jprint({"error": "no_credentials"})
         return 1
@@ -200,7 +243,9 @@ def main():
             operator_open_id=open_id,
             bot_open_id=bot_open_id,
             sidecar_mode=sidecar,
+            config_profile=profile,
         )
+        _persist_profile_env(profile)
         _jprint({
             "status": "ready",
             "chat_id": chat_id_to_activate,
@@ -308,7 +353,9 @@ def main():
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=False,
+        config_profile=profile,
     )
+    _persist_profile_env(profile)
 
     _jprint({
         "status": "ready",

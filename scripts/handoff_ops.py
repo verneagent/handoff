@@ -39,8 +39,8 @@ def _get_session_id(args=None):
     return sid
 
 
-def _require_credentials():
-    creds = handoff_config.load_credentials()
+def _require_credentials(profile=None):
+    creds = handoff_config.load_credentials(profile=profile)
     if not creds:
         raise RuntimeError("no_credentials")
     return creds
@@ -48,6 +48,46 @@ def _require_credentials():
 
 def _require_token(creds):
     return lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+
+
+def _resolve_cmd_profile(args):
+    """Resolve profile for a command: --profile arg → session → resolve_profile()."""
+    explicit = getattr(args, "profile", None)
+    if explicit:
+        return handoff_config.resolve_profile(explicit=explicit)
+    # Defense-in-depth: if a session is active, read profile from it
+    sid = _get_session_id()
+    if sid:
+        session = handoff_db.get_session(sid)
+        if session:
+            return session.get("config_profile", "default")
+    return handoff_config.resolve_profile()
+
+
+def _clean_profile_env():
+    """Remove HANDOFF_PROFILE from CLAUDE_ENV_FILE on deactivate."""
+    import tempfile
+
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    if not env_file or not os.path.exists(env_file):
+        return
+    try:
+        with open(env_file) as f:
+            lines = [l for l in f.readlines()
+                     if not l.startswith("export HANDOFF_PROFILE=")]
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(env_file))
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.writelines(lines)
+            os.rename(tmp, env_file)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        _warn(f"failed to clean HANDOFF_PROFILE from env file: {e}")
 
 
 def _require_active_chat_id():
@@ -377,6 +417,7 @@ def cmd_activate(args):
     sid = _get_session_id()
     if not sid:
         raise RuntimeError("missing_session_id")
+    profile = _resolve_cmd_profile(args)
     model = str(args.session_model).strip()
     if "/" in model:
         model = model.split("/", 1)[1]
@@ -384,7 +425,7 @@ def cmd_activate(args):
     operator_open_id = ""
     bot_open_id = ""
     try:
-        creds = handoff_config.load_credentials()
+        creds = handoff_config.load_credentials(profile=profile)
         email = creds.get("email", "") if creds else ""
         if email:
             token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -399,6 +440,7 @@ def cmd_activate(args):
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
         sidecar_mode=sidecar_mode,
+        config_profile=profile,
     )
     # Best-effort: update MEMORY.md with handoff-specific instructions
     # so they survive auto-compaction
@@ -410,7 +452,7 @@ def cmd_activate(args):
     return 0
 
 
-def _drain_takeover_signal(worker_url, chat_id, timeout_s):
+def _drain_takeover_signal(worker_url, chat_id, timeout_s, profile=None):
     if not worker_url:
         return False
     result = poll_worker_urllib(
@@ -418,7 +460,7 @@ def _drain_takeover_signal(worker_url, chat_id, timeout_s):
         chat_id,
         since="",
         timeout=max(1, int(timeout_s)),
-        api_key=handoff_config.load_api_key() or "",
+        api_key=handoff_config.load_api_key(profile=profile) or "",
     )
     return bool(result.get("takeover", False))
 
@@ -428,6 +470,7 @@ def cmd_takeover(args):
     if not sid:
         raise RuntimeError("missing_session_id")
 
+    profile = _resolve_cmd_profile(args)
     model = str(args.session_model).strip()
     if "/" in model:
         model = model.split("/", 1)[1]
@@ -435,7 +478,7 @@ def cmd_takeover(args):
     operator_open_id = ""
     bot_open_id = ""
     try:
-        creds = handoff_config.load_credentials()
+        creds = handoff_config.load_credentials(profile=profile)
         email = creds.get("email", "") if creds else ""
         if email:
             token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -452,6 +495,7 @@ def cmd_takeover(args):
         expected_owner_session_id=expected_owner,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
+        config_profile=profile,
     )
 
     if not ok:
@@ -466,12 +510,12 @@ def cmd_takeover(args):
         )
         return 1
 
-    worker_url = handoff_config.load_worker_url()
+    worker_url = handoff_config.load_worker_url(profile=profile)
     if worker_url and replaced_owner and replaced_owner != sid:
         handoff_worker.send_takeover(worker_url, args.chat_id)
     drained = False
     if worker_url and replaced_owner and replaced_owner != sid:
-        drained = _drain_takeover_signal(worker_url, args.chat_id, args.drain_timeout)
+        drained = _drain_takeover_signal(worker_url, args.chat_id, args.drain_timeout, profile=profile)
     _jprint(
         {
             "ok": True,
@@ -495,6 +539,7 @@ def cmd_deactivate(args):
     handoff_db.clear_working_message(sid)
     handoff_db.clear_autoapprove_message(sid)
     chat_id = handoff_db.deactivate_handoff(sid)
+    _clean_profile_env()
     _jprint({"ok": True, "deactivated": True, "chat_id": chat_id or ""})
     return 0
 
@@ -701,7 +746,8 @@ def cmd_list_groups(args):
 def cmd_status(args):
     workspace_id = handoff_config.get_workspace_id()
     db_path = handoff_db._db_path()
-    creds = handoff_config.load_credentials()
+    profile = _resolve_cmd_profile(args)
+    creds = handoff_config.load_credentials(profile=profile)
     out = {
         "workspace": workspace_id,
         "database": db_path,
@@ -755,8 +801,13 @@ def cmd_status(args):
 
 
 def cmd_config_current(args):
-    cfg = handoff_config.CONFIG_FILE
-    _jprint({"config_file": cfg, "config_exists": os.path.exists(cfg)})
+    profile = _resolve_cmd_profile(args)
+    cfg = handoff_config.config_path(profile)
+    _jprint({
+        "config_file": cfg,
+        "config_exists": os.path.exists(cfg),
+        "profile": profile,
+    })
     return 0
 
 
@@ -1084,7 +1135,8 @@ def cmd_clear_project(args):
 
 
 def cmd_deinit_config(args):
-    cfg = handoff_config.CONFIG_FILE
+    profile = _resolve_cmd_profile(args)
+    cfg = handoff_config.config_path(profile)
     removed = []
     missing = []
 
@@ -1100,6 +1152,7 @@ def cmd_deinit_config(args):
             "removed": removed,
             "missing": missing,
             "active_config": cfg,
+            "profile": profile,
         }
     )
     return 0
@@ -1277,8 +1330,9 @@ def cmd_diag(args):
     steps = []
 
     # 1. Credentials & token
+    diag_profile = _resolve_cmd_profile(args)
     try:
-        creds = _require_credentials()
+        creds = _require_credentials(profile=diag_profile)
         token = _require_token(creds)
         steps.append({"step": "credentials", "ok": True})
     except Exception as e:
@@ -1291,7 +1345,7 @@ def cmd_diag(args):
         return 1
 
     # 2. Worker connectivity
-    worker_url = handoff_config.load_worker_url()
+    worker_url = handoff_config.load_worker_url(profile=diag_profile)
     if not worker_url:
         _jprint(
             {
@@ -1532,6 +1586,43 @@ def cmd_guest_list(args):
     })
 
 
+def cmd_profile_list(args):
+    """List all available config profiles."""
+    profiles = handoff_config.list_profiles()
+    default = handoff_config.get_default_profile() or "default"
+    current = handoff_config.resolve_profile()
+    _jprint({
+        "ok": True,
+        "profiles": profiles,
+        "default_profile": default,
+        "current_profile": current,
+    })
+    return 0
+
+
+def cmd_profile_show(args):
+    """Show details of a specific profile."""
+    profile = _resolve_cmd_profile(args)
+    path = handoff_config.config_path(profile)
+    exists = os.path.exists(path)
+    _jprint({
+        "ok": True,
+        "profile": profile,
+        "config_path": path,
+        "config_exists": exists,
+    })
+    return 0
+
+
+def cmd_profile_set_default(args):
+    """Set the default profile."""
+    name = args.name
+    handoff_config.validate_profile_name(name)
+    handoff_config.set_default_profile(name)
+    _jprint({"ok": True, "default_profile": name})
+    return 0
+
+
 def cmd_relay(args):
     """Send a relay message to another handoff chat via the Worker."""
     import urllib.request
@@ -1546,8 +1637,9 @@ def cmd_relay(args):
         _jprint({"ok": False, "error": "session not found"})
         return 1
 
-    worker_url = handoff_config.load_worker_url()
-    api_key = handoff_config.load_api_key()
+    profile = session.get("config_profile", "default")
+    worker_url = handoff_config.load_worker_url(profile=profile)
+    api_key = handoff_config.load_api_key(profile=profile)
     if not worker_url or not api_key:
         _jprint({"ok": False, "error": "worker_url or api_key not configured"})
         return 1
@@ -1558,7 +1650,7 @@ def cmd_relay(args):
     from_chat_name = ""
     from_workspace = ""
     try:
-        credentials = handoff_config.load_credentials()
+        credentials = handoff_config.load_credentials(profile=profile)
         if credentials:
             token = lark_im.get_tenant_token(
                 credentials["app_id"], credentials["app_secret"]
@@ -1593,7 +1685,7 @@ def cmd_relay(args):
         if result.get("ok"):
             # Also send a Lark card to the target group for visibility
             try:
-                credentials = handoff_config.load_credentials()
+                credentials = handoff_config.load_credentials(profile=profile)
                 if credentials:
                     token = lark_im.get_tenant_token(
                         credentials["app_id"], credentials["app_secret"]
@@ -1628,6 +1720,7 @@ def _chat_id_type(value):
 
 def build_parser():
     p = argparse.ArgumentParser(description="Deterministic handoff operations")
+    p.add_argument("--profile", default=None, help="Config profile name")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("session-check")
@@ -1820,6 +1913,16 @@ def build_parser():
 
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
+
+    s = sub.add_parser("profile-list")
+    s.set_defaults(func=cmd_profile_list)
+
+    s = sub.add_parser("profile-show")
+    s.set_defaults(func=cmd_profile_show)
+
+    s = sub.add_parser("profile-set-default")
+    s.add_argument("name", help="Profile name to set as default")
+    s.set_defaults(func=cmd_profile_set_default)
 
     s = sub.add_parser("relay")
     s.add_argument("--target-chat-id", required=True, type=_chat_id_type)

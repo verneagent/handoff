@@ -726,7 +726,7 @@ class MainTest(unittest.TestCase):
             "chat_id": "c1",
             "message_filter": "verbose",
         }
-        on_post_tool_use.handoff_config.load_credentials = lambda: {
+        on_post_tool_use.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a",
             "app_secret": "b",
         }
@@ -753,7 +753,7 @@ class MainTest(unittest.TestCase):
             "chat_id": "c1",
             "message_filter": "verbose",
         }
-        on_post_tool_use.handoff_config.load_credentials = lambda: {
+        on_post_tool_use.handoff_config.load_credentials = lambda **kw: {
             "app_id": "a",
             "app_secret": "b",
         }
@@ -778,7 +778,7 @@ class MainTest(unittest.TestCase):
     def test_interrupt_skipped(self):
         sent = []
         on_post_tool_use.handoff_db.get_session = lambda sid: {"chat_id": "c1"}
-        on_post_tool_use.handoff_config.load_credentials = lambda: None
+        on_post_tool_use.handoff_config.load_credentials = lambda **kw: None
         on_post_tool_use.lark_im.send_message = lambda *a, **kw: sent.append(1)
 
         self._run_main(

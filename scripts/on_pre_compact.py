@@ -43,7 +43,8 @@ def main():
     trigger = hook_input.get("trigger", "auto")
 
     chat_id = session["chat_id"]
-    credentials = handoff_config.load_credentials()
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         return
 

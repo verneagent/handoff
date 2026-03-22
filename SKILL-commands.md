@@ -138,6 +138,53 @@ Outputs JSON with a `steps` array showing each stage (credentials, worker, ack, 
 
 This MUST run with `dangerouslyDisableSandbox: true` (Claude Code only — opencode has no sandbox). Print the JSON output to the user. Do NOT enter Handoff mode.
 
+## Profile Commands
+
+### List Profiles (`/handoff profile`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-list
+```
+
+Outputs JSON with `profiles` (sorted list), `default_profile`, and `current_profile`. Print as a formatted list. Do NOT enter Handoff mode.
+
+### Show Profile (`/handoff profile show`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-show
+```
+
+Show the current profile name and its config file path. Use `--profile <name>` to inspect a specific profile.
+
+### Set Default Profile (`/handoff profile set-default <name>`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py profile-set-default <NAME>
+```
+
+Writes the default profile to `~/.handoff/default_profile`. The default profile is used when no `--profile` argument or `HANDOFF_PROFILE` env var is set.
+
+### Using profiles with other commands
+
+All commands that load credentials support `--profile <name>`:
+
+```bash
+# Enter handoff with a specific profile
+python3 .claude/skills/handoff/scripts/enter_handoff.py --session-model opus --profile work
+
+# Run preflight with a specific profile
+python3 .claude/skills/handoff/scripts/preflight.py --profile work
+
+# Activate with a specific profile
+python3 .claude/skills/handoff/scripts/handoff_ops.py --profile work activate --chat-id <ID> --session-model opus
+```
+
+Profile config files:
+- `default` profile: `~/.handoff/config.json`
+- Named profiles: `~/.handoff/profiles/<name>.json`
+
+Profile resolution order: explicit `--profile` arg > `HANDOFF_PROFILE` env var > `~/.handoff/default_profile` file > `"default"`.
+
 ## Test Commands
 
 - Log health check (plugin + permission bridge):

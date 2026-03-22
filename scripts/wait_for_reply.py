@@ -358,7 +358,8 @@ def main():
         json.dump({"replies": unprocessed, "count": len(unprocessed)}, sys.stdout)
         return
 
-    worker_url = handoff_config.load_worker_url()
+    _profile = session.get("config_profile", "default")
+    worker_url = handoff_config.load_worker_url(profile=_profile)
     if not worker_url:
         json.dump({"error": "no_worker_url"}, sys.stdout)
         return

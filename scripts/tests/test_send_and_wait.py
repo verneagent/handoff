@@ -69,7 +69,7 @@ class ResolveSessionContextTest(unittest.TestCase):
         os.environ.pop("HANDOFF_SESSION_ID", None)
         # Mock credentials so we get past that check to the session ID check
         orig_load = handoff_config.load_credentials
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 lark_im.resolve_session_context()
@@ -81,7 +81,7 @@ class ResolveSessionContextTest(unittest.TestCase):
         os.environ["HANDOFF_SESSION_ID"] = "nonexistent"
         # Mock credentials so we don't fail there
         orig_load = handoff_config.load_credentials
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         orig_token = lark_im.get_tenant_token
         lark_im.get_tenant_token = lambda a, b: "tok"
         try:
@@ -94,8 +94,9 @@ class ResolveSessionContextTest(unittest.TestCase):
 
     def test_no_credentials_raises(self):
         os.environ["HANDOFF_SESSION_ID"] = "s1"
+        handoff_db.register_session("s1", "chat-cred-test", "opus")
         orig_load = handoff_config.load_credentials
-        handoff_config.load_credentials = lambda: None
+        handoff_config.load_credentials = lambda **kw: None
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 lark_im.resolve_session_context()
@@ -109,7 +110,7 @@ class ResolveSessionContextTest(unittest.TestCase):
 
         orig_load = handoff_config.load_credentials
         orig_token = lark_im.get_tenant_token
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         lark_im.get_tenant_token = lambda a, b: "tok"
         try:
             ctx = lark_im.resolve_session_context()
@@ -241,7 +242,8 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: sent.append(1)
-        handoff_config.load_worker_url = lambda: None
+        handoff_config.load_worker_url = lambda **kw: None
+        handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100", "config_profile": "default"}
 
         output = self._run(["hello"])
         data = json.loads(output)
@@ -255,7 +257,7 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: sent.append(1)
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
         handoff_worker.poll_worker_ws = lambda *a, **kw: {
             "replies": [], "takeover": True, "error": None,
@@ -272,7 +274,7 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
         handoff_worker.poll_worker_ws = lambda *a, **kw: {
             "replies": [{"text": "hi", "create_time": "200", "message_id": "r1"}],
@@ -293,7 +295,7 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
         # WS error forces HTTP fallback, which also returns no replies
         handoff_worker.poll_worker_ws = lambda *a, **kw: (_ for _ in ()).throw(
@@ -315,7 +317,7 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
         handoff_worker.ack_worker_replies = lambda *a, **kw: None
 
@@ -344,7 +346,7 @@ class SendAndWaitPhasesTest(unittest.TestCase):
             "session": {"chat_id": "c1"},
         }
         send_and_wait.send_to_group.send = lambda *a, **kw: None
-        handoff_config.load_worker_url = lambda: "https://w.example"
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
         handoff_db.get_session = lambda sid: {"chat_id": "c1", "last_checked": "100"}
 
         handoff_worker.poll_worker_ws = lambda *a, **kw: (_ for _ in ()).throw(

@@ -455,7 +455,8 @@ def _format_failure(tool_name, tool_input, error, cwd):
 
 def _get_token(session):
     """Get tenant token, returning (token, chat_id) or (None, None)."""
-    credentials = handoff_config.load_credentials()
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         return None, None
     try:
@@ -696,11 +697,12 @@ def _check_stop_signal(session_id, session):
         if not chat_id:
             return
 
-        worker_url = handoff_config.load_worker_url()
+        profile = session.get("config_profile", "default")
+        worker_url = handoff_config.load_worker_url(profile=profile)
         if not worker_url:
             return
 
-        api_key = handoff_config.load_api_key()
+        api_key = handoff_config.load_api_key(profile=profile)
         if not api_key:
             return
 

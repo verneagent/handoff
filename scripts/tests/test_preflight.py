@@ -73,15 +73,19 @@ class PreflightTestBase(unittest.TestCase):
 class CheckCredentialsTest(PreflightTestBase):
     def test_missing_config_file(self):
         handoff_config.CONFIG_FILE = os.path.join(self.tmp.name, "nonexistent.json")
+        handoff_config.HANDOFF_HOME = self.tmp.name
         ok, detail = preflight.check_credentials()
         self.assertFalse(ok)
         self.assertIn("not found", detail)
 
     def test_invalid_json(self):
-        config_path = os.path.join(self.tmp.name, "bad.json")
+        config_dir = os.path.join(self.tmp.name, ".handoff_bad")
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "config.json")
         with open(config_path, "w") as f:
             f.write("not json {{{")
         handoff_config.CONFIG_FILE = config_path
+        handoff_config.HANDOFF_HOME = config_dir
 
         ok, detail = preflight.check_credentials()
         self.assertFalse(ok)
@@ -176,13 +180,13 @@ class CheckWorkerUrlTest(PreflightTestBase):
         super().tearDown()
 
     def test_missing_url(self):
-        handoff_config.load_worker_url = lambda: None
+        handoff_config.load_worker_url = lambda **kw: None
         ok, detail = preflight.check_worker_url()
         self.assertFalse(ok)
         self.assertIn("worker_url", detail)
 
     def test_present_url(self):
-        handoff_config.load_worker_url = lambda: "https://worker.example.com"
+        handoff_config.load_worker_url = lambda **kw: "https://worker.example.com"
         ok, url = preflight.check_worker_url()
         self.assertTrue(ok)
         self.assertEqual(url, "https://worker.example.com")
@@ -202,13 +206,13 @@ class CheckApiKeyTest(PreflightTestBase):
         super().tearDown()
 
     def test_missing_key(self):
-        handoff_config.load_api_key = lambda: None
+        handoff_config.load_api_key = lambda **kw: None
         ok, detail = preflight.check_api_key()
         self.assertFalse(ok)
         self.assertIn("worker_api_key", detail)
 
     def test_present_key(self):
-        handoff_config.load_api_key = lambda: "secret123"
+        handoff_config.load_api_key = lambda **kw: "secret123"
         ok, detail = preflight.check_api_key()
         self.assertTrue(ok)
         self.assertIsNone(detail)
@@ -230,13 +234,13 @@ class CheckTokenTest(PreflightTestBase):
         super().tearDown()
 
     def test_no_credentials(self):
-        handoff_config.load_credentials = lambda: None
+        handoff_config.load_credentials = lambda **kw: None
         ok, detail = preflight.check_token()
         self.assertFalse(ok)
         self.assertIn("Skipped", detail)
 
     def test_token_error(self):
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         lark_im.get_tenant_token = lambda a, b: (_ for _ in ()).throw(
             RuntimeError("auth fail")
         )
@@ -245,7 +249,7 @@ class CheckTokenTest(PreflightTestBase):
         self.assertIn("auth fail", detail)
 
     def test_token_success(self):
-        handoff_config.load_credentials = lambda: {"app_id": "a", "app_secret": "b"}
+        handoff_config.load_credentials = lambda **kw: {"app_id": "a", "app_secret": "b"}
         lark_im.get_tenant_token = lambda a, b: "tok"
         ok, detail = preflight.check_token()
         self.assertTrue(ok)
@@ -391,9 +395,9 @@ class MainFlowTest(PreflightTestBase):
 
     def test_all_checks_fail_exits_1(self):
         handoff_config.CONFIG_FILE = os.path.join(self.tmp.name, "nope.json")
-        handoff_config.load_worker_url = lambda: None
-        handoff_config.load_api_key = lambda: None
-        handoff_config.load_credentials = lambda: None
+        handoff_config.load_worker_url = lambda **kw: None
+        handoff_config.load_api_key = lambda **kw: None
+        handoff_config.load_credentials = lambda **kw: None
 
         output, exit_code = self._run_main(["--skip-hooks"])
         self.assertEqual(exit_code, 1)
@@ -406,9 +410,9 @@ class MainFlowTest(PreflightTestBase):
             "worker_api_key": "k",
             "ims": {"lark": {"app_id": "a", "app_secret": "s", "email": "e@e.com"}},
         })
-        handoff_config.load_worker_url = lambda: "https://w.example"
-        handoff_config.load_api_key = lambda: "k"
-        handoff_config.load_credentials = lambda: {
+        handoff_config.load_worker_url = lambda **kw: "https://w.example"
+        handoff_config.load_api_key = lambda **kw: "k"
+        handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "s"
         }
         lark_im.get_tenant_token = lambda a, b: "tok"
@@ -434,7 +438,7 @@ class MainFlowTest(PreflightTestBase):
         self._write_config({
             "ims": {"lark": {"app_id": "a", "app_secret": "secret123", "email": "e@e.com"}},
         })
-        handoff_config.load_credentials = lambda: {
+        handoff_config.load_credentials = lambda **kw: {
             "app_id": "a", "app_secret": "secret123"
         }
         lark_im.get_tenant_token = lambda a, b: "tok"
@@ -459,7 +463,7 @@ class MainFlowTest(PreflightTestBase):
                 }
             },
         })
-        handoff_config.load_credentials = lambda: {
+        handoff_config.load_credentials = lambda **kw: {
             "app_id": "nested_a", "app_secret": "nested_secret"
         }
         lark_im.get_tenant_token = lambda a, b: "tok"
@@ -496,7 +500,7 @@ class CheckWorkerReachableTest(PreflightTestBase):
             stderr = "connection refused"
 
         sp.run = lambda *a, **kw: FakeResult()
-        handoff_config._worker_auth_headers = lambda: []
+        handoff_config._worker_auth_headers = lambda **kw: []
 
         ok, detail = preflight.check_worker_reachable("https://w.example")
         self.assertFalse(ok)
@@ -511,7 +515,7 @@ class CheckWorkerReachableTest(PreflightTestBase):
             stderr = ""
 
         sp.run = lambda *a, **kw: FakeResult()
-        handoff_config._worker_auth_headers = lambda: []
+        handoff_config._worker_auth_headers = lambda **kw: []
 
         ok, detail = preflight.check_worker_reachable("https://w.example")
         self.assertFalse(ok)
@@ -526,7 +530,7 @@ class CheckWorkerReachableTest(PreflightTestBase):
             stderr = ""
 
         sp.run = lambda *a, **kw: FakeResult()
-        handoff_config._worker_auth_headers = lambda: []
+        handoff_config._worker_auth_headers = lambda **kw: []
 
         ok, detail = preflight.check_worker_reachable("https://w.example")
         self.assertTrue(ok)
@@ -540,7 +544,7 @@ class CheckWorkerReachableTest(PreflightTestBase):
             stderr = ""
 
         sp.run = lambda *a, **kw: FakeResult()
-        handoff_config._worker_auth_headers = lambda: []
+        handoff_config._worker_auth_headers = lambda **kw: []
 
         ok, detail = preflight.check_worker_reachable("https://w.example")
         self.assertFalse(ok)
@@ -553,7 +557,7 @@ class CheckWorkerReachableTest(PreflightTestBase):
             raise sp.TimeoutExpired("curl", 15)
 
         sp.run = raise_timeout
-        handoff_config._worker_auth_headers = lambda: []
+        handoff_config._worker_auth_headers = lambda **kw: []
 
         ok, detail = preflight.check_worker_reachable("https://w.example")
         self.assertFalse(ok)

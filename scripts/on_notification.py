@@ -83,7 +83,8 @@ def main():
     prefix = handoff_config.get_worktree_name()
     title = f"[{prefix}] {message}"
 
-    credentials = handoff_config.load_credentials()
+    profile = session.get("config_profile", "default")
+    credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         return
 
