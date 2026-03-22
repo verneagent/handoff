@@ -173,8 +173,43 @@ def sync_files(src_dir, dst_dir):
     return changed
 
 
+def detect_tool():
+    """Detect whether we're running under Claude Code or OpenCode."""
+    if os.environ.get("OPENCODE"):
+        return "opencode"
+    return "claude"
+
+
 def reinstall_hooks(install_dir):
-    """Reinstall hooks from hooks.json if the install_hooks.py script exists."""
+    """Reinstall hooks/plugins after upgrade.
+
+    For Claude Code: runs install_hooks.py.
+    For OpenCode: copies plugin files from assets/.
+    """
+    tool = detect_tool()
+
+    if tool == "opencode":
+        # OpenCode: copy plugin files
+        assets_dir = os.path.join(install_dir, "assets", "opencode")
+        if not os.path.isdir(assets_dir):
+            return True, "No OpenCode assets to install"
+        try:
+            for src_sub, dst_sub in [
+                ("plugins", ".opencode/plugins"),
+                ("scripts", ".opencode/scripts"),
+            ]:
+                src = os.path.join(assets_dir, src_sub)
+                if not os.path.isdir(src):
+                    continue
+                dst = os.path.join(os.getcwd(), dst_sub)
+                os.makedirs(dst, exist_ok=True)
+                for f in os.listdir(src):
+                    shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
+            return True, "OpenCode plugin files updated"
+        except Exception as e:
+            return False, f"Failed to update OpenCode plugins: {e}"
+
+    # Claude Code: run install_hooks.py
     install_script = os.path.join(install_dir, "scripts", "install_hooks.py")
     if os.path.exists(install_script):
         result = subprocess.run(
