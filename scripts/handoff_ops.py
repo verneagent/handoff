@@ -2057,8 +2057,26 @@ def cmd_agent_spawn(args):
     slug = _agent_slug(group_name or "temp")
     log_path = os.path.join(log_dir, f"handoff-agent-{slug}.log")
 
+    # Find a Python with claude_agent_sdk installed. sys.executable might be
+    # Xcode Python or a different version when called from Agent SDK Bash.
+    import subprocess as _sp
+    python_path = sys.executable
+    try:
+        _sp.run([python_path, "-c", "import claude_agent_sdk"],
+                capture_output=True, timeout=5)
+    except Exception:
+        # Try common homebrew paths
+        for candidate in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]:
+            try:
+                _sp.run([candidate, "-c", "import claude_agent_sdk"],
+                        capture_output=True, check=True, timeout=5)
+                python_path = candidate
+                break
+            except Exception:
+                pass
+
     cmd = [
-        sys.executable, agent_script,
+        python_path, agent_script,
         "--chat-id", chat_id,
         "--project-dir", project_dir,
         "--model", args.model,
