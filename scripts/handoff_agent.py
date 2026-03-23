@@ -421,12 +421,27 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 continue
             user_message = "\n".join(texts)
 
-            # Check for handback
-            if user_message.lower().strip() in ("handback", "hand back"):
+            # Check for handback (with optional "dissolve" suffix)
+            msg_lower = user_message.lower().strip()
+            if msg_lower.startswith("handback") or msg_lower.startswith("hand back"):
+                dissolve = "dissolve" in msg_lower
+                body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
                 handoff_lifecycle.handoff_end(
                     session_id, model, tool_name="Daemon",
-                    body="Daemon stopped.", silence=False,
+                    body=body, silence=False,
                 )
+                if dissolve:
+                    try:
+                        import handoff_ops
+                        # Remove user from group and dissolve
+                        token = lark_im.get_tenant_token(
+                            credentials["app_id"], credentials["app_secret"])
+                        lark_im.remove_chat_members(token, chat_id,
+                            [operator_open_id]) if operator_open_id else None
+                        lark_im.dissolve_chat(token, chat_id)
+                        _log("Group dissolved.")
+                    except Exception as e:
+                        _log(f"Dissolve error: {e}")
                 _log("Handback received. Stopped.")
                 running = False
                 break
