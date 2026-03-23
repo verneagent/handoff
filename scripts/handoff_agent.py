@@ -366,11 +366,58 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if not replies:
                 continue
 
-            # Concatenate all reply texts
-            texts = [r.get("text", "").strip() for r in replies if r.get("text")]
-            if not texts:
+            # Process all replies: extract text and download images/files
+            parts = []
+            for r in replies:
+                text = r.get("text", "").strip()
+                if text:
+                    parts.append(text)
+
+                # Download images (image messages or inline images in posts)
+                image_key = r.get("image_key", "")
+                if image_key:
+                    msg_id = r.get("message_id", "")
+                    for key in image_key.split(","):
+                        key = key.strip()
+                        if not key:
+                            continue
+                        try:
+                            import subprocess as _sp
+                            result = _sp.run(
+                                [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
+                                 "download-image", "--image-key", key, "--message-id", msg_id],
+                                capture_output=True, text=True, timeout=30)
+                            dl = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
+                            path = dl.get("path", "")
+                            if path:
+                                parts.append(f"[Image downloaded: {path}]\nPlease use the Read tool to view this image.")
+                                _log(f"Downloaded image: {path}")
+                        except Exception as e:
+                            _log(f"Image download error: {e}")
+
+                # Download files
+                file_key = r.get("file_key", "")
+                file_name = r.get("file_name", "file")
+                if file_key:
+                    msg_id = r.get("message_id", "")
+                    try:
+                        import subprocess as _sp
+                        result = _sp.run(
+                            [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
+                             "download-file", "--file-key", file_key,
+                             "--message-id", msg_id, "--file-name", file_name],
+                            capture_output=True, text=True, timeout=30)
+                        dl = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
+                        path = dl.get("path", "")
+                        if path:
+                            parts.append(f"[File downloaded: {path}]\nPlease use the Read tool to view this file.")
+                            _log(f"Downloaded file: {path}")
+                    except Exception as e:
+                        _log(f"File download error: {e}")
+
+            if not parts:
                 continue
-            user_message = "\n".join(texts)
+            user_message = "\n".join(parts)
 
             # Check for handback — flexible matching for natural language
             msg_lower = user_message.lower().strip()
