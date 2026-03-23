@@ -2002,6 +2002,89 @@ def cmd_agent_log(args):
     _jprint({"name": agent["name"], "log": log_path, "lines": output})
 
 
+def cmd_agent_spawn(args):
+    """Spawn a temporary daemon agent (no launchd, background process).
+
+    Discovers or creates a group for the workspace, then runs handoff_agent.py
+    as a nohup background process. Stops on handback.
+    """
+    import subprocess
+
+    project_dir = os.path.abspath(args.project_dir or os.getcwd())
+    if not os.path.isdir(project_dir):
+        _jprint({"error": f"Not a directory: {project_dir}"})
+        return 1
+
+    profile = _resolve_cmd_profile(args)
+    creds = handoff_config.load_credentials(profile=profile)
+    if not creds:
+        _jprint({"error": "No credentials configured"})
+        return 1
+
+    token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+    email = creds.get("email", "")
+    open_id = lark_im.lookup_open_id_by_email(token, email) if email else ""
+
+    # Compute workspace ID for the target project dir
+    machine = handoff_config._get_machine_name()
+    folder = project_dir.replace("/", "-").strip("-")
+    workspace_id = f"{machine}-{folder}"
+
+    # Discover existing groups for this workspace
+    groups = find_groups_for_workspace(token, workspace_id, open_id or None)
+
+    chat_id = None
+    group_name = None
+    if groups:
+        # Use first available group
+        chat_id = groups[0]["chat_id"]
+        group_name = groups[0]["name"]
+    else:
+        # Create new group
+        worktree = os.path.basename(project_dir)
+        existing_names = [g["name"] for g in groups]
+        chat_id = create_handoff_group(
+            token, open_id, worktree, machine, existing_names,
+            workspace_id=workspace_id,
+        )
+        group_name = f"{worktree}@{machine}"
+
+    # Spawn handoff_agent.py as background process
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    agent_script = os.path.join(script_dir, "handoff_agent.py")
+    log_dir = _AGENT_LOG_DIR
+    os.makedirs(log_dir, exist_ok=True)
+    slug = _agent_slug(group_name or "temp")
+    log_path = os.path.join(log_dir, f"handoff-agent-{slug}.log")
+
+    cmd = [
+        sys.executable, agent_script,
+        "--chat-id", chat_id,
+        "--project-dir", project_dir,
+        "--model", args.model,
+    ]
+    if profile != "default":
+        cmd += ["--profile", profile]
+
+    with open(log_path, "a") as log_f:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    _jprint({
+        "ok": True,
+        "pid": proc.pid,
+        "chat_id": chat_id,
+        "group_name": group_name,
+        "project_dir": project_dir,
+        "model": args.model,
+        "log": log_path,
+    })
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Deterministic handoff operations")
     p.add_argument("--profile", default=None, help="Config profile name")
@@ -2244,6 +2327,11 @@ def build_parser():
     s.add_argument("--name", default=None)
     s.add_argument("--lines", type=int, default=50)
     s.set_defaults(func=cmd_agent_log)
+
+    s = sub.add_parser("agent-spawn")
+    s.add_argument("--project-dir", default=None)
+    s.add_argument("--model", default="claude-opus-4-6")
+    s.set_defaults(func=cmd_agent_spawn)
 
     return p
 

@@ -211,6 +211,34 @@ def _handle_builtin_command(user_message):
         "agent status": "agent-status",
     }
 
+    # Agent spawn: "spawn agent ~/path" or "new agent ~/path"
+    import re
+    spawn_match = re.match(
+        r"(?:spawn|new)\s+agent\s+(.+)", msg, re.IGNORECASE)
+    if spawn_match:
+        project_dir = os.path.expanduser(spawn_match.group(1).strip())
+        cmd = [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
+               "agent-spawn", "--project-dir", project_dir]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30)
+            raw = result.stdout.strip() or result.stderr.strip()
+            try:
+                data = json.loads(raw)
+                if data.get("ok"):
+                    return (
+                        f"**Agent spawned** ✓\n"
+                        f"Group: {data.get('group_name', '?')}\n"
+                        f"Dir: `{data.get('project_dir', '?')}`\n"
+                        f"PID: {data.get('pid', '?')}\n"
+                        f"Log: `{data.get('log', '?')}`"
+                    )
+                return f"Error: {data.get('error', raw)}"
+            except json.JSONDecodeError:
+                return raw
+        except Exception as e:
+            return f"Error: {e}"
+
     for prefix, subcmd in cmd_map.items():
         if msg == prefix or msg.startswith(prefix + " "):
             remainder = user_message.strip()[len(prefix):].strip()
