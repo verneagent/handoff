@@ -322,6 +322,7 @@ async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6
         cwd=project_dir,
         model=model,
         system_prompt=context,
+        hooks={},  # Disable hooks — daemon manages its own lifecycle
     )
     if session_id:
         options.resume = session_id
