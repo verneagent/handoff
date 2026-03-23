@@ -109,7 +109,18 @@ install() {
     # Build environment dict
     ENV_DICT=""
     if [[ -n "$API_KEY" ]]; then
-        ENV_DICT="    <key>EnvironmentVariables</key>
+        # Resolve SSL cert file for Python under launchd (certifi or system)
+    SSL_CERT=$("$PYTHON" -c "try:
+    import certifi; print(certifi.where())
+except ImportError:
+    import ssl; print(ssl.get_default_verify_paths().cafile or '')" 2>/dev/null)
+
+    # Capture proxy settings from current shell (crucial for GFW regions)
+    PROXY_HTTP="${http_proxy:-${HTTP_PROXY:-}}"
+    PROXY_HTTPS="${https_proxy:-${HTTPS_PROXY:-}}"
+    PROXY_ALL="${all_proxy:-${ALL_PROXY:-}}"
+
+    ENV_DICT="    <key>EnvironmentVariables</key>
     <dict>
         <key>ANTHROPIC_API_KEY</key>
         <string>${API_KEY}</string>
@@ -118,9 +129,28 @@ install() {
         <key>HOME</key>
         <string>$HOME</string>
         <key>LANG</key>
-        <string>en_US.UTF-8</string>
+        <string>en_US.UTF-8</string>${SSL_CERT:+
+        <key>SSL_CERT_FILE</key>
+        <string>${SSL_CERT}</string>}${PROXY_HTTP:+
+        <key>http_proxy</key>
+        <string>${PROXY_HTTP}</string>}${PROXY_HTTPS:+
+        <key>https_proxy</key>
+        <string>${PROXY_HTTPS}</string>}${PROXY_ALL:+
+        <key>all_proxy</key>
+        <string>${PROXY_ALL}</string>}
     </dict>"
     else
+        # Resolve SSL cert file for Python under launchd (certifi or system)
+        SSL_CERT=$("$PYTHON" -c "try:
+    import certifi; print(certifi.where())
+except ImportError:
+    import ssl; print(ssl.get_default_verify_paths().cafile or '')" 2>/dev/null)
+
+        # Capture proxy settings from current shell (crucial for GFW regions)
+        PROXY_HTTP="${http_proxy:-${HTTP_PROXY:-}}"
+        PROXY_HTTPS="${https_proxy:-${HTTPS_PROXY:-}}"
+        PROXY_ALL="${all_proxy:-${ALL_PROXY:-}}"
+
         ENV_DICT="    <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -128,7 +158,15 @@ install() {
         <key>HOME</key>
         <string>$HOME</string>
         <key>LANG</key>
-        <string>en_US.UTF-8</string>
+        <string>en_US.UTF-8</string>${SSL_CERT:+
+        <key>SSL_CERT_FILE</key>
+        <string>${SSL_CERT}</string>}${PROXY_HTTP:+
+        <key>http_proxy</key>
+        <string>${PROXY_HTTP}</string>}${PROXY_HTTPS:+
+        <key>https_proxy</key>
+        <string>${PROXY_HTTPS}</string>}${PROXY_ALL:+
+        <key>all_proxy</key>
+        <string>${PROXY_ALL}</string>}
     </dict>"
     fi
 

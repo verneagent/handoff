@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Handoff daemon: fully managed handoff using Claude Agent SDK.
 
-No CLI dependency. Reuses existing handoff scripts (wait_for_reply.py,
-send_to_group.py) for Lark I/O, and Claude Agent SDK for processing.
+No CLI dependency. Uses inline polling (no subprocess) for Lark I/O,
+and Claude Agent SDK for processing.
 
 Usage:
-    python3 scripts/daemon.py --chat-id <CHAT_ID> --project-dir <DIR> [--model <MODEL>]
+    python3 scripts/handoff_agent.py --chat-id <CHAT_ID> --project-dir <DIR> [--model <MODEL>]
 
 The daemon:
 1. Activates a handoff session (registers in DB)
 2. Sends a startup card to Lark
-3. Waits for messages via wait_for_reply.py (WebSocket)
+3. Waits for messages via WebSocket (inline, no subprocess)
 4. Processes each message with Claude Agent SDK
-5. Sends response via send_to_group.py (markdown card)
+5. Sends response via Lark IM API (inline)
 6. Loops until "handback" is received
 
 Requirements:
@@ -24,7 +24,6 @@ import asyncio
 import json
 import os
 import signal
-import subprocess
 import sys
 import time
 
@@ -34,7 +33,10 @@ sys.path.insert(0, SCRIPT_DIR)
 import handoff_config
 import handoff_db
 import handoff_lifecycle
+import handoff_worker
 import lark_im
+import send_to_group as send_mod
+import wait_for_reply as wfr_mod
 
 
 def _log(msg):
@@ -42,50 +44,157 @@ def _log(msg):
     print(f"[daemon] [{ts}] {msg}", flush=True)
 
 
-def _run_script(script_name, *args, timeout=600):
-    """Run a handoff script and return its stdout."""
-    cmd = [sys.executable, os.path.join(SCRIPT_DIR, script_name)] + list(args)
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout,
-        env=os.environ,
-    )
-    stderr = result.stderr.strip()
-    if stderr:
-        _log(f"{script_name} stderr: {stderr[:300]}")
-    if result.returncode != 0:
-        _log(f"{script_name} exit code: {result.returncode}")
-    return result.stdout.strip()
-
-
-def wait_for_reply(timeout=300):
-    """Wait for a Lark message using wait_for_reply.py. Returns parsed JSON or None."""
-    args = ["--timeout", str(timeout)]
+def _diagnose_network():
+    """Log SSL and network diagnostics for debugging launchd issues."""
+    import ssl
+    ctx = ssl.create_default_context()
+    stats = ctx.cert_store_stats()
+    _log(f"SSL cert store: {stats}")
     try:
-        output = _run_script("wait_for_reply.py", *args, timeout=max(timeout + 60, 600))
-        if not output:
-            return None
-        # The script may print multiple lines; the JSON is the last line
-        for line in reversed(output.split("\n")):
-            line = line.strip()
-            if line.startswith("{"):
-                return json.loads(line)
-        return None
-    except subprocess.TimeoutExpired:
-        return None
-    except Exception as e:
-        _log(f"wait_for_reply error: {e}")
-        return None
-
-
-def send_to_group(text, card=False):
-    """Send a message to Lark using send_to_group.py."""
-    args = [text]
-    if card:
-        args.append("--card")
+        import certifi
+        _log(f"certifi CA: {certifi.where()}")
+    except ImportError:
+        _log("certifi not installed")
+    # Check if we can resolve the worker hostname
+    import socket
     try:
-        _run_script("send_to_group.py", *args, timeout=30)
+        worker_url = handoff_config.load_worker_url(profile="default")
+        if worker_url:
+            import urllib.parse
+            host = urllib.parse.urlparse(worker_url).hostname
+            addr = socket.getaddrinfo(host, 443, socket.AF_INET)
+            _log(f"DNS resolve {host}: {addr[0][4] if addr else 'FAILED'}")
     except Exception as e:
-        _log(f"send_to_group error: {e}")
+        _log(f"DNS resolve failed: {e}")
+
+
+def wait_for_reply_inline(chat_id, session, profile, timeout=300):
+    """Wait for a Lark message using inline WebSocket poll. Returns parsed data or None.
+
+    Directly calls handoff_worker.poll_worker_ws() instead of spawning a
+    subprocess, avoiding environment/SSL issues under launchd.
+    """
+    worker_url = handoff_config.load_worker_url(profile=profile)
+    if not worker_url:
+        _log("No worker URL configured")
+        return None
+
+    session_id = session.get("session_id", "")
+
+    # Refresh session from DB each call to get updated last_checked
+    fresh = handoff_db.get_session(session_id) if session_id else None
+    if fresh:
+        session.update(fresh)
+    since = session.get("last_checked")
+    if not since:
+        since = str(int(time.time() * 1000) - 5000)
+
+    operator_open_id = session.get("operator_open_id", "")
+    bot_open_id = session.get("bot_open_id", "")
+    sidecar_mode = session.get("sidecar_mode", False)
+    guests = session.get("guests") or []
+    member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
+
+    deadline = None if timeout <= 0 else time.time() + timeout
+    use_ws = True
+
+    def _finish(replies):
+        """Record messages, ack with reaction, update last_checked."""
+        wfr_mod._ack_with_reaction(replies)
+        for r in replies:
+            try:
+                handoff_db.record_received_message(
+                    chat_id=chat_id,
+                    text=r.get("text", ""),
+                    title="",
+                    source_message_id=r.get("message_id", ""),
+                    message_time=r.get("create_time"),
+                )
+            except Exception:
+                pass
+        last_checked = replies[-1]["create_time"]
+        if session_id:
+            try:
+                handoff_db.set_session_last_checked(session_id, last_checked)
+            except Exception:
+                pass
+        return {"replies": replies, "count": len(replies)}
+
+    while deadline is None or time.time() < deadline:
+        # --- Try WebSocket first ---
+        if use_ws:
+            try:
+                result = handoff_worker.poll_worker_ws(
+                    worker_url, chat_id, since, profile=profile,
+                )
+                if result.get("takeover"):
+                    return {"takeover": True}
+                replies = result.get("replies", [])
+                if replies:
+                    replies = wfr_mod.filter_self_bot(replies, bot_open_id)
+                if replies:
+                    if member_roles:
+                        replies = wfr_mod.filter_by_allowed_senders(
+                            replies, operator_open_id, member_roles)
+                    else:
+                        replies = wfr_mod.filter_by_operator(replies, operator_open_id)
+                if sidecar_mode and replies:
+                    replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
+                if replies:
+                    return _finish(replies)
+                error = result.get("error")
+                if error:
+                    raise Exception(error)
+                continue
+            except Exception as e:
+                _log(f"WebSocket error: {e} — falling back to HTTP")
+                # Fall through to HTTP
+
+        # --- HTTP long-poll fallback ---
+        try:
+            result = handoff_worker.poll_worker(
+                worker_url, chat_id, since, profile=profile,
+            )
+            if result.get("takeover"):
+                return {"takeover": True}
+            if result.get("error"):
+                _log(f"HTTP poll error: {result['error']}")
+                time.sleep(3)
+                continue
+            replies = result.get("replies", [])
+            if replies:
+                last_checked = replies[-1]["create_time"]
+                handoff_worker.ack_worker_replies(
+                    worker_url, chat_id, last_checked, profile=profile)
+                replies = wfr_mod.filter_self_bot(replies, bot_open_id)
+                if member_roles:
+                    replies = wfr_mod.filter_by_allowed_senders(
+                        replies, operator_open_id, member_roles)
+                else:
+                    replies = wfr_mod.filter_by_operator(replies, operator_open_id)
+                if sidecar_mode:
+                    replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
+                if replies:
+                    return _finish(replies)
+        except Exception as e:
+            _log(f"HTTP poll error: {e}")
+            time.sleep(3)
+
+    return {"timeout": True, "replies": [], "count": 0}
+
+
+def send_response_inline(token, chat_id, text):
+    """Send a markdown card response to Lark inline (no subprocess)."""
+    try:
+        send_mod.send(
+            token, chat_id,
+            title="",
+            message=text,
+            is_card=False,
+            color="blue",
+        )
+    except Exception as e:
+        _log(f"send error: {e}")
 
 
 async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6"):
@@ -131,6 +240,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     # Resolve profile
     resolved_profile = handoff_config.resolve_profile(explicit=profile)
 
+    # Log network diagnostics (helps debug launchd issues)
+    _diagnose_network()
+
     # Activate handoff in DB
     credentials = handoff_config.load_credentials(profile=resolved_profile)
     if not credentials:
@@ -138,6 +250,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
         return 1
 
     token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+    _log("Token acquired successfully")
 
     # Resolve operator open_id
     operator_open_id = ""
@@ -160,6 +273,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Daemon", silence=False)
     _log(f"Daemon started. Project: {project_dir}")
 
+    # Load session data for inline polling
+    session = handoff_db.get_session(session_id) or {}
+
     agent_session_id = None
     running = True
 
@@ -173,9 +289,11 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
     while running:
         try:
-            # Wait for message
+            # Wait for message (inline — no subprocess)
             _log("Waiting for message...")
-            data = wait_for_reply(timeout=300)
+            data = wait_for_reply_inline(
+                chat_id, session, resolved_profile, timeout=300,
+            )
 
             if data is None:
                 continue
@@ -221,13 +339,21 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 if new_sid:
                     agent_session_id = new_sid
 
-                # Send response
-                send_to_group(result)
+                # Send response (inline — no subprocess)
+                # Refresh token in case it expired
+                token = lark_im.get_tenant_token(
+                    credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id, result)
                 _log("Response sent.")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
-                send_to_group(f"**Error:**\n```\n{str(e)[:500]}\n```")
+                token = lark_im.get_tenant_token(
+                    credentials["app_id"], credentials["app_secret"])
+                send_response_inline(
+                    token, chat_id,
+                    f"**Error:**\n```\n{str(e)[:500]}\n```",
+                )
 
         except KeyboardInterrupt:
             running = False
