@@ -213,9 +213,10 @@ def _handle_builtin_command(user_message):
     }
 
     # Agent spawn: "spawn agent ~/path" or "new agent ~/path"
+    # Match against original message (not lowered) to preserve path case
     import re
     spawn_match = re.match(
-        r"(?:spawn|new)\s+agent\s+(.+)", msg, re.IGNORECASE)
+        r"(?:spawn|new)\s+agent\s+(.+)", user_message.strip(), re.IGNORECASE)
     if spawn_match:
         project_dir = os.path.expanduser(spawn_match.group(1).strip())
         cmd = [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
