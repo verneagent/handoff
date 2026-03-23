@@ -114,17 +114,21 @@ install() {
         <key>ANTHROPIC_API_KEY</key>
         <string>${API_KEY}</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.local/bin:$HOME/.nvm/versions/node/$(node -v 2>/dev/null || echo v18.0.0)/bin</string>
         <key>HOME</key>
         <string>$HOME</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
     </dict>"
     else
         ENV_DICT="    <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:$HOME/.local/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.local/bin:$HOME/.nvm/versions/node/$(node -v 2>/dev/null || echo v18.0.0)/bin</string>
         <key>HOME</key>
         <string>$HOME</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
     </dict>"
     fi
 

@@ -49,14 +49,15 @@ def _run_script(script_name, *args, timeout=600):
         cmd, capture_output=True, text=True, timeout=timeout,
         env=os.environ,
     )
+    stderr = result.stderr.strip()
+    if stderr:
+        _log(f"{script_name} stderr: {stderr[:300]}")
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        if stderr:
-            _log(f"{script_name} stderr: {stderr[:200]}")
+        _log(f"{script_name} exit code: {result.returncode}")
     return result.stdout.strip()
 
 
-def wait_for_reply(timeout=0):
+def wait_for_reply(timeout=300):
     """Wait for a Lark message using wait_for_reply.py. Returns parsed JSON or None."""
     args = ["--timeout", str(timeout)]
     try:
@@ -174,7 +175,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
         try:
             # Wait for message
             _log("Waiting for message...")
-            data = wait_for_reply(timeout=0)
+            data = wait_for_reply(timeout=300)
 
             if data is None:
                 continue
