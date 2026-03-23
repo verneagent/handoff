@@ -322,7 +322,19 @@ async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6
         cwd=project_dir,
         model=model,
         system_prompt=context,
-        hooks={},  # Disable hooks — daemon manages its own lifecycle
+        # Disable ALL hooks — daemon manages its own lifecycle.
+        # Empty dict doesn't work; must explicitly override each event type
+        # loaded from user/project settings.
+        hooks={
+            "Notification": [],
+            "PermissionRequest": [],
+            "PreToolUse": [],
+            "PostToolUse": [],
+            "PostToolUseFailure": [],
+            "PreCompact": [],
+            "SessionStart": [],
+            "SessionEnd": [],
+        },
     )
     if session_id:
         options.resume = session_id
