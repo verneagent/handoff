@@ -297,16 +297,10 @@ def _format_agent_output(subcmd, raw):
     return raw
 
 
-async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6",
-                    chat_id=None, group_name=None):
-    """Run Claude Agent SDK with the given prompt. Returns (result_text, session_id).
+def _build_agent_options(project_dir, model, group_name=None):
+    """Build ClaudeAgentOptions for the daemon."""
+    from claude_agent_sdk import ClaudeAgentOptions
 
-    The SDK auto-loads CLAUDE.md/AGENTS.md from cwd and ~/.claude/,
-    including skill definitions from ~/.claude/skills/.
-    """
-    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
-
-    # Give the agent context about its environment
     context = (
         f"You are a Handoff daemon agent running in the background. "
         f"You communicate with the user through a Lark group chat"
@@ -315,45 +309,36 @@ async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6
         f"Keep responses concise — they will be displayed on mobile."
     )
 
-    options = ClaudeAgentOptions(
+    return ClaudeAgentOptions(
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
         cwd=project_dir,
         model=model,
         system_prompt=context,
-        # Disable ALL hooks — daemon manages its own lifecycle.
-        # Empty dict doesn't work; must explicitly override each event type
-        # loaded from user/project settings.
-        hooks={
-            "Notification": [],
-            "PermissionRequest": [],
-            "PreToolUse": [],
-            "PostToolUse": [],
-            "PostToolUseFailure": [],
-            "PreCompact": [],
-            "SessionStart": [],
-            "SessionEnd": [],
-        },
+        hooks={},  # Disable hooks — daemon manages its own lifecycle
     )
-    if session_id:
-        options.resume = session_id
 
+
+async def run_agent_turn(client, prompt):
+    """Send a prompt to the persistent SDK client. Returns result text."""
+    from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
+
+    await client.query(prompt)
     result_text = None
-    new_session_id = None
 
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, SystemMessage) and message.subtype == "init":
-            new_session_id = message.data.get("session_id")
-            _log(f"Agent session: {new_session_id}")
-        elif isinstance(message, ResultMessage):
+    async for message in client.receive_response():
+        if isinstance(message, ResultMessage):
             result_text = message.result
-            if not new_session_id:
-                new_session_id = getattr(message, "session_id", None)
             cost = getattr(message, "total_cost_usd", 0)
             _log(f"Agent done. Cost: ${cost:.4f}")
+        elif isinstance(message, AssistantMessage):
+            # Extract text from assistant messages as fallback
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    result_text = block.text
 
-    return result_text or "(no response)", new_session_id
+    return result_text or "(no response)"
 
 
 async def main_loop(chat_id, project_dir, model, profile=None):
@@ -414,7 +399,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     # Load session data for inline polling
     session = handoff_db.get_session(session_id) or {}
 
-    agent_session_id = None
     running = True
 
     def handle_signal(sig, frame):
@@ -425,112 +409,107 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    while running:
-        try:
-            # Wait for message (inline — no subprocess)
-            _log("Waiting for message...")
-            data = wait_for_reply_inline(
-                chat_id, session, resolved_profile, timeout=300,
-            )
+    # Use persistent ClaudeSDKClient for multi-turn (no session end between messages)
+    from claude_agent_sdk import ClaudeSDKClient
 
-            if data is None:
-                continue
+    options = _build_agent_options(project_dir, model, group_name)
+    async with ClaudeSDKClient(options=options) as client:
+        _log("Agent SDK client initialized")
 
-            if data.get("timeout"):
-                continue
-
-            if data.get("takeover"):
-                _log("Taken over by another session.")
-                running = False
-                break
-
-            replies = data.get("replies", [])
-            if not replies:
-                continue
-
-            # Concatenate all reply texts
-            texts = [r.get("text", "").strip() for r in replies if r.get("text")]
-            if not texts:
-                continue
-            user_message = "\n".join(texts)
-
-            # Check for handback — flexible matching for natural language
-            msg_lower = user_message.lower().strip()
-            is_handback = (
-                msg_lower.startswith("handback")
-                or msg_lower.startswith("hand back")
-                or "handback" in msg_lower
-                or "hand back" in msg_lower
-                or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")
-            )
-            if is_handback:
-                dissolve = "dissolve" in msg_lower
-                body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
-                handoff_lifecycle.handoff_end(
-                    session_id, model, tool_name="Daemon",
-                    body=body, silence=False,
-                )
-                if dissolve:
-                    try:
-                        import handoff_ops
-                        # Remove user from group and dissolve
-                        token = lark_im.get_tenant_token(
-                            credentials["app_id"], credentials["app_secret"])
-                        lark_im.remove_chat_members(token, chat_id,
-                            [operator_open_id]) if operator_open_id else None
-                        lark_im.dissolve_chat(token, chat_id)
-                        _log("Group dissolved.")
-                    except Exception as e:
-                        _log(f"Dissolve error: {e}")
-                _log("Handback received. Stopped.")
-                running = False
-                break
-
-            _log(f"Processing: {user_message[:80]}")
-
-            # Check for built-in commands first
-            builtin_result = _handle_builtin_command(user_message)
-            if builtin_result is not None:
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(token, chat_id, builtin_result)
-                _log("Built-in command handled.")
-                continue
-
-            # Run Agent SDK
+        while running:
             try:
-                result, new_sid = await run_agent(
-                    prompt=user_message,
-                    project_dir=project_dir,
-                    session_id=agent_session_id,
-                    model=model,
-                    chat_id=chat_id,
-                    group_name=group_name,
+                # Wait for message (inline — no subprocess)
+                _log("Waiting for message...")
+                data = wait_for_reply_inline(
+                    chat_id, session, resolved_profile, timeout=300,
                 )
-                if new_sid:
-                    agent_session_id = new_sid
 
-                # Send response (inline — no subprocess)
-                # Refresh token in case it expired
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(token, chat_id, result)
-                _log("Response sent.")
+                if data is None:
+                    continue
 
+                if data.get("timeout"):
+                    continue
+
+                if data.get("takeover"):
+                    _log("Taken over by another session.")
+                    running = False
+                    break
+
+                replies = data.get("replies", [])
+                if not replies:
+                    continue
+
+                # Concatenate all reply texts
+                texts = [r.get("text", "").strip() for r in replies if r.get("text")]
+                if not texts:
+                    continue
+                user_message = "\n".join(texts)
+
+                # Check for handback — flexible matching for natural language
+                msg_lower = user_message.lower().strip()
+                is_handback = (
+                    msg_lower.startswith("handback")
+                    or msg_lower.startswith("hand back")
+                    or "handback" in msg_lower
+                    or "hand back" in msg_lower
+                    or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")
+                )
+                if is_handback:
+                    dissolve = "dissolve" in msg_lower
+                    body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
+                    handoff_lifecycle.handoff_end(
+                        session_id, model, tool_name="Daemon",
+                        body=body, silence=False,
+                    )
+                    if dissolve:
+                        try:
+                            token = lark_im.get_tenant_token(
+                                credentials["app_id"], credentials["app_secret"])
+                            lark_im.remove_chat_members(token, chat_id,
+                                [operator_open_id]) if operator_open_id else None
+                            lark_im.dissolve_chat(token, chat_id)
+                            _log("Group dissolved.")
+                        except Exception as e:
+                            _log(f"Dissolve error: {e}")
+                    _log("Handback received. Stopped.")
+                    running = False
+                    break
+
+                _log(f"Processing: {user_message[:80]}")
+
+                # Check for built-in commands first
+                builtin_result = _handle_builtin_command(user_message)
+                if builtin_result is not None:
+                    token = lark_im.get_tenant_token(
+                        credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, builtin_result)
+                    _log("Built-in command handled.")
+                    continue
+
+                # Run Agent SDK (persistent session — no session end between turns)
+                try:
+                    result = await run_agent_turn(client, user_message)
+
+                    # Send response (inline — no subprocess)
+                    token = lark_im.get_tenant_token(
+                        credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, result)
+                    _log("Response sent.")
+
+                except Exception as e:
+                    _log(f"Agent error: {e}")
+                    token = lark_im.get_tenant_token(
+                        credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(
+                        token, chat_id,
+                        f"**Error:**\n```\n{str(e)[:500]}\n```",
+                    )
+
+            except KeyboardInterrupt:
+                running = False
             except Exception as e:
-                _log(f"Agent error: {e}")
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(
-                    token, chat_id,
-                    f"**Error:**\n```\n{str(e)[:500]}\n```",
-                )
-
-        except KeyboardInterrupt:
-            running = False
-        except Exception as e:
-            _log(f"Loop error: {e}")
-            await asyncio.sleep(5)
+                _log(f"Loop error: {e}")
+                await asyncio.sleep(5)
 
     # Cleanup (if not already deactivated by handback)
     try:
