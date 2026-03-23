@@ -219,12 +219,14 @@ for p in ['.claude/skills/handoff/scripts', os.path.expanduser('~/.claude/skills
         sys.path.insert(0, p)
         break
 import lark_im
-lark_im.save_credentials(
+import handoff_config
+handoff_config.save_credentials(
     worker_url='<WORKER_URL>',
     worker_api_key='<WORKER_API_KEY>',
     app_id='<APP_ID>',
     app_secret='<APP_SECRET>',
     email='<EMAIL>',
+    profile=handoff_config.resolve_profile(explicit='<PROFILE_OR_NONE>'),
 )
 "
 ```

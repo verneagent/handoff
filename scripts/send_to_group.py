@@ -341,9 +341,12 @@ def send(token, chat_id, title, message, is_card, color, buttons=None,
         warn(f"failed to record sent message {msg_id}: {e}")
     # Register with worker so reactions can be routed to this chat
     try:
-        worker_url = handoff_config.load_worker_url()
+        session_id = os.environ.get("HANDOFF_SESSION_ID", "")
+        _s = handoff_db.get_session(session_id) if session_id else None
+        _send_profile = (_s.get("config_profile", "default") if _s else "default")
+        worker_url = handoff_config.load_worker_url(profile=_send_profile)
         if worker_url:
-            handoff_worker.register_message(worker_url, msg_id, chat_id)
+            handoff_worker.register_message(worker_url, msg_id, chat_id, profile=_send_profile)
     except Exception as e:
         warn(f"failed to register message {msg_id} with worker: {e}")
     return msg_id

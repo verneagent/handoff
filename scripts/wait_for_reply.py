@@ -139,6 +139,19 @@ def filter_bot_interactions(replies, bot_open_id):
     return filtered
 
 
+def _resolve_session_profile():
+    """Resolve config profile from the active session, falling back to 'default'."""
+    try:
+        sid = os.environ.get("HANDOFF_SESSION_ID", "")
+        if sid:
+            session = handoff_db.get_session(sid)
+            if session:
+                return session.get("config_profile", "default")
+    except Exception:
+        pass
+    return "default"
+
+
 def _extract_system_warnings(replies, chat_id):
     """Remove system_warning replies and send them as Lark cards.
 
@@ -155,7 +168,8 @@ def _send_system_warning(chat_id, message):
     """Send a warning card to Lark about a worker-side error."""
     try:
         import handoff_config
-        creds = handoff_config.load_credentials()
+        _profile = _resolve_session_profile()
+        creds = handoff_config.load_credentials(profile=_profile)
         if not creds:
             return
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -187,7 +201,8 @@ def _send_quota_warning(chat_id):
     """
     try:
         import handoff_config
-        creds = handoff_config.load_credentials()
+        _profile = _resolve_session_profile()
+        creds = handoff_config.load_credentials(profile=_profile)
         if not creds:
             return False
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -222,9 +237,9 @@ def _send_quota_warning(chat_id):
         return False
 
 
-def fetch_replies_http(worker_url, chat_id, since):
+def fetch_replies_http(worker_url, chat_id, since, profile="default"):
     """HTTP long-poll the worker for replies. Returns (replies, takeover, error)."""
-    result = handoff_worker.poll_worker(worker_url, chat_id, since)
+    result = handoff_worker.poll_worker(worker_url, chat_id, since, profile=profile)
     return result["replies"], result["takeover"], result["error"]
 
 
@@ -248,7 +263,8 @@ def _ack_with_reaction(replies):
     clear_ack_reaction()
 
     try:
-        creds = handoff_config.load_credentials()
+        _profile = _resolve_session_profile()
+        creds = handoff_config.load_credentials(profile=_profile)
         if not creds:
             return
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -275,7 +291,8 @@ def clear_ack_reaction():
         with open(_ACK_REACTION_FILE) as f:
             data = json.load(f)
         os.unlink(_ACK_REACTION_FILE)
-        creds = handoff_config.load_credentials()
+        _profile = _resolve_session_profile()
+        creds = handoff_config.load_credentials(profile=_profile)
         if not creds:
             return
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
@@ -378,7 +395,7 @@ def main():
         # --- Try WebSocket first (much lower quota usage) ---
         if use_ws:
             try:
-                result = handoff_worker.poll_worker_ws(worker_url, chat_id, since)
+                result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, profile=_profile)
                 if result.get("takeover"):
                     json.dump({"takeover": True}, sys.stdout)
                     return
@@ -417,6 +434,7 @@ def main():
                 worker_url,
                 chat_id,
                 since,
+                profile=_profile,
             )
             if error:
                 if not quota_warned and handoff_worker.is_do_quota_error(error):
@@ -437,7 +455,7 @@ def main():
             if replies:
                 # Ack processed replies via HTTP (WS already acks inline)
                 last_checked = replies[-1]["create_time"]
-                handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked, profile=_profile)
                 replies = _extract_system_warnings(replies, chat_id)
                 if not replies:
                     continue

@@ -32,7 +32,7 @@ def is_do_quota_error(error_msg):
     return any(p in lower for p in _DO_QUOTA_PATTERNS)
 
 
-def poll_worker(worker_url, chat_id, since=None, key=None):
+def poll_worker(worker_url, chat_id, since=None, key=None, profile="default"):
     """Long-poll the worker for replies from a handoff group.
 
     Uses the /poll/ endpoint which blocks up to 25 seconds waiting for
@@ -54,7 +54,7 @@ def poll_worker(worker_url, chat_id, since=None, key=None):
     if since:
         url += f"&since={since}"
     result = subprocess.run(
-        ["curl", "-s", "--max-time", "30", *_worker_auth_headers(), url],
+        ["curl", "-s", "--max-time", "30", *_worker_auth_headers(profile), url],
         capture_output=True,
         text=True,
         timeout=35,
@@ -321,7 +321,7 @@ class _WebSocket:
         return result
 
 
-def poll_worker_ws(worker_url, chat_id, since=None, max_duration=None, key=None):
+def poll_worker_ws(worker_url, chat_id, since=None, max_duration=None, key=None, profile="default"):
     """Connect via WebSocket and wait for replies. Returns on first message.
 
     Uses a single persistent WebSocket connection instead of repeated HTTP
@@ -345,7 +345,7 @@ def poll_worker_ws(worker_url, chat_id, since=None, max_duration=None, key=None)
     if since:
         ws_url += f"?since={since}"
 
-    api_key = load_api_key()
+    api_key = load_api_key(profile)
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -403,7 +403,7 @@ def poll_worker_ws(worker_url, chat_id, since=None, max_duration=None, key=None)
         ws.close()
 
 
-def register_message(worker_url, message_id, chat_id):
+def register_message(worker_url, message_id, chat_id, profile="default"):
     """Register a sent message's chat_id with the worker for reaction routing."""
     import subprocess
 
@@ -420,7 +420,7 @@ def register_message(worker_url, message_id, chat_id):
                 "POST",
                 "-H",
                 "Content-Type: application/json",
-                *_worker_auth_headers(),
+                *_worker_auth_headers(profile),
                 "-d",
                 payload,
                 url,
@@ -438,7 +438,7 @@ def register_message(worker_url, message_id, chat_id):
         print(f"[handoff] register_message error: {e}", file=sys.stderr)
 
 
-def send_takeover(worker_url, chat_id):
+def send_takeover(worker_url, chat_id, profile="default"):
     """Signal the worker to notify any polling session of a takeover.
 
     Sets a flag in the Durable Object. The next poll from
@@ -448,6 +448,7 @@ def send_takeover(worker_url, chat_id):
     Args:
         worker_url: Base URL of the Cloudflare Worker.
         chat_id: Chat ID of the handoff group being taken over.
+        profile: Config profile name for auth headers.
     """
     import subprocess
 
@@ -461,7 +462,7 @@ def send_takeover(worker_url, chat_id):
                 "5",
                 "-X",
                 "POST",
-                *_worker_auth_headers(),
+                *_worker_auth_headers(profile),
                 url,
             ],
             capture_output=True,
@@ -478,7 +479,7 @@ def send_takeover(worker_url, chat_id):
         print(f"[handoff] send_takeover error: {e}", file=sys.stderr)
 
 
-def ack_worker_replies(worker_url, chat_id, before, key=None):
+def ack_worker_replies(worker_url, chat_id, before, key=None, profile="default"):
     """Acknowledge processed replies, removing them from the Durable Object.
 
     Removes all replies with create_time <= before. This prevents unbounded
@@ -490,6 +491,7 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
         before: Timestamp string (ms) — remove replies at or before this time.
         key: Optional DO routing key. When provided, acks this key instead of
             ``chat:{chat_id}``. Used by permission bridge for nonce-keyed DOs.
+        profile: Config profile name for auth headers.
     """
     import subprocess
 
@@ -504,7 +506,7 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
                 "5",
                 "-X",
                 "POST",
-                *_worker_auth_headers(),
+                *_worker_auth_headers(profile),
                 url,
             ],
             capture_output=True,
@@ -521,7 +523,7 @@ def ack_worker_replies(worker_url, chat_id, before, key=None):
         print(f"[handoff] ack_worker_replies error: {e}", file=sys.stderr)
 
 
-def check_do_quota_status(worker_url, chat_id):
+def check_do_quota_status(worker_url, chat_id, profile="default"):
     """Check if the DO quota is exhausted for this chat (via KV, no DO access).
 
     Returns the exhausted_at timestamp string if exhausted, or None.
@@ -532,7 +534,7 @@ def check_do_quota_status(worker_url, chat_id):
     url = f"{worker_url}/status/{do_key}"
     try:
         result = subprocess.run(
-            ["curl", "-s", "--max-time", "5", *_worker_auth_headers(), url],
+            ["curl", "-s", "--max-time", "5", *_worker_auth_headers(profile), url],
             capture_output=True,
             text=True,
             timeout=10,

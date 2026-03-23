@@ -129,16 +129,16 @@ def format_tool_description(tool_name, tool_input):
     return "\n".join(parts[:5])
 
 
-def _poll_worker(worker_url, chat_id, since, key=None):
+def _poll_worker(worker_url, chat_id, since, key=None, profile="default"):
     try:
-        result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, key=key)
+        result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, key=key, profile=profile)
         error = result.get("error")
         if error:
             raise Exception(error)
         return result
     except Exception as e:
         warn(f"WebSocket error: {e} — falling back to HTTP")
-        return handoff_worker.poll_worker(worker_url, chat_id, since, key=key)
+        return handoff_worker.poll_worker(worker_url, chat_id, since, key=key, profile=profile)
 
 
 def _tool_summary(tool_name, tool_input):
@@ -315,6 +315,7 @@ def main():
         sys.exit(0)
 
     # Generate nonce, ack stale replies, send card — all in one step.
+    _perm_profile = session.get("config_profile", "default") if session else "default"
     perm_body = build_permission_body(tool_name, message)
     try:
         nonce, perm_msg_id = prepare_permission_request(
@@ -324,7 +325,7 @@ def main():
             tool_name,
             message,
             ack_fn=lambda key, before: handoff_worker.ack_worker_replies(
-                worker_url, chat_id, before, key=key
+                worker_url, chat_id, before, key=key, profile=_perm_profile
             ),
             log_fn=warn,
             approver_ids=approver_ids,
@@ -341,10 +342,10 @@ def main():
     # Poll the nonce-keyed DO (not chat:{chatId}) for correlated replies only.
     decision, _ = run_permission_poll_loop(
         poll_fn=lambda chat_id, since: _poll_worker(
-            worker_url, chat_id, since, key=nonce
+            worker_url, chat_id, since, key=nonce, profile=_perm_profile
         ),
         ack_fn=lambda chat_id, before: handoff_worker.ack_worker_replies(
-            worker_url, chat_id, before, key=nonce
+            worker_url, chat_id, before, key=nonce, profile=_perm_profile
         ),
         record_received_fn=handoff_db.record_received_message,
         set_last_checked_fn=handoff_db.set_session_last_checked,

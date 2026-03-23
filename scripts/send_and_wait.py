@@ -133,7 +133,7 @@ def main():
     while deadline is None or time.time() < deadline:
         # --- Try WebSocket first ---
         try:
-            result = handoff_worker.poll_worker_ws(worker_url, chat_id, since)
+            result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, profile=_profile)
             if result.get("takeover"):
                 json.dump({"takeover": True}, sys.stdout)
                 return
@@ -161,7 +161,7 @@ def main():
         # --- HTTP long-poll fallback ---
         try:
             replies, takeover, error = wait_for_reply.fetch_replies_http(
-                worker_url, chat_id, since
+                worker_url, chat_id, since, profile=_profile
             )
             if error:
                 if not quota_warned and handoff_worker.is_do_quota_error(error):
@@ -178,7 +178,7 @@ def main():
                 return
             if replies:
                 last_checked = replies[-1]["create_time"]
-                handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked)
+                handoff_worker.ack_worker_replies(worker_url, chat_id, last_checked, profile=_profile)
                 replies = wait_for_reply.filter_self_bot(replies, bot_open_id)
             if replies:
                 if member_roles:

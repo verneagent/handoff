@@ -522,7 +522,7 @@ def cmd_takeover(args):
 
     worker_url = handoff_config.load_worker_url(profile=profile)
     if worker_url and replaced_owner and replaced_owner != sid:
-        handoff_worker.send_takeover(worker_url, args.chat_id)
+        handoff_worker.send_takeover(worker_url, args.chat_id, profile=profile)
     drained = False
     if worker_url and replaced_owner and replaced_owner != sid:
         drained = _drain_takeover_signal(worker_url, args.chat_id, args.drain_timeout, profile=profile)
@@ -1399,7 +1399,7 @@ def cmd_diag(args):
     steps.append({"step": "chat_id", "ok": True, "value": chat_id})
 
     # 4. Ack all stale replies
-    handoff_worker.ack_worker_replies(worker_url, chat_id, "9999999999999")
+    handoff_worker.ack_worker_replies(worker_url, chat_id, "9999999999999", profile=diag_profile)
     steps.append({"step": "ack_stale", "ok": True})
 
     # 5. Send test card with buttons
@@ -1440,7 +1440,7 @@ def cmd_diag(args):
         def _ws_poll():
             try:
                 ws_result_box["result"] = handoff_worker.poll_worker_ws(
-                    worker_url, chat_id, since="0"
+                    worker_url, chat_id, since="0", profile=diag_profile
                 )
             except Exception as exc:
                 ws_result_box["error"] = str(exc)
@@ -1492,7 +1492,7 @@ def cmd_diag(args):
         http_start = time.time()
         http_deadline = http_start + timeout
         while time.time() < http_deadline:
-            result = handoff_worker.poll_worker(worker_url, chat_id, since="0")
+            result = handoff_worker.poll_worker(worker_url, chat_id, since="0", profile=diag_profile)
             if result.get("error"):
                 continue
             replies = result.get("replies", [])
@@ -1523,7 +1523,7 @@ def cmd_diag(args):
     steps.append(poll_result)
 
     # Clean up
-    handoff_worker.ack_worker_replies(worker_url, chat_id, "9999999999999")
+    handoff_worker.ack_worker_replies(worker_url, chat_id, "9999999999999", profile=diag_profile)
 
     ok = all(s.get("ok") for s in steps)
     _jprint({"ok": ok, "steps": steps})

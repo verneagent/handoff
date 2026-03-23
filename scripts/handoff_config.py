@@ -104,7 +104,7 @@ def resolve_profile(explicit=None):
     return "default"
 
 
-def config_path(profile="default"):
+def config_path(profile):
     """Return the config file path for a given profile.
 
     "default" → ~/.handoff/config.json
@@ -253,13 +253,12 @@ def default_poll_timeout(session):
 # ---------------------------------------------------------------------------
 
 
-def _load_config(profile=None):
+def _load_config(profile):
     """Read raw JSON from the config file for *profile*.
 
-    When *profile* is None, resolve_profile() determines which config to load.
     Returns dict or None on error.
     """
-    path = config_path(resolve_profile(profile))
+    path = config_path(profile)
     try:
         with open(path) as f:
             return json.load(f)
@@ -289,7 +288,7 @@ def _resolve_im_config(raw):
     return im_cfg
 
 
-def load_credentials(profile=None):
+def load_credentials(profile):
     """Load app_id, app_secret, email from config file.
 
     Returns the config dict, or None if the file doesn't exist or
@@ -298,7 +297,7 @@ def load_credentials(profile=None):
     return _resolve_im_config(_load_config(profile))
 
 
-def load_worker_url(profile=None):
+def load_worker_url(profile):
     """Load the Cloudflare Worker URL from config. Returns None if missing."""
     raw = _load_config(profile)
     if raw is None:
@@ -307,7 +306,7 @@ def load_worker_url(profile=None):
     return url or None
 
 
-def load_api_key(profile=None):
+def load_api_key(profile):
     """Load the Worker API key from config. Returns None if not set."""
     raw = _load_config(profile)
     if raw is None:
@@ -315,7 +314,7 @@ def load_api_key(profile=None):
     return raw.get("worker_api_key", "").strip() or None
 
 
-def _worker_auth_headers(profile=None):
+def _worker_auth_headers(profile):
     """Return curl args for Worker API auth. Empty list if no key configured."""
     key = load_api_key(profile)
     if key:
@@ -329,14 +328,15 @@ def save_credentials(
     email=None,
     worker_url=None,
     worker_api_key=None,
-    profile=None,
+    *,
+    profile,
 ):
     """Save credentials to the config file for *profile*.
 
     IM-specific fields (app_id, app_secret, email) go under ims.lark;
     infrastructure fields (worker_url, worker_api_key) stay top-level.
     """
-    target = config_path(resolve_profile(profile))
+    target = config_path(profile)
     raw = {}
     if os.path.exists(target):
         try:
