@@ -1730,6 +1730,278 @@ def _chat_id_type(value):
     return value
 
 
+# ---------------------------------------------------------------------------
+# Agent (daemon) management — macOS launchd only
+# ---------------------------------------------------------------------------
+
+_AGENT_PLIST_PREFIX = "com.handoff.agent"
+_AGENT_PLIST_DIR = os.path.expanduser("~/Library/LaunchAgents")
+_AGENT_LOG_DIR = "/tmp/handoff"
+
+
+def _agent_slug(name):
+    """Convert a human-readable name to a filesystem-safe slug."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "default"
+
+
+def _discover_agents():
+    """Scan plist files and return list of installed agent dicts."""
+    import glob
+    import plistlib
+
+    agents = []
+    pattern = os.path.join(_AGENT_PLIST_DIR, f"{_AGENT_PLIST_PREFIX}*.plist")
+    for path in sorted(glob.glob(pattern)):
+        try:
+            with open(path, "rb") as f:
+                plist = plistlib.load(f)
+        except Exception:
+            continue
+        label = plist.get("Label", "")
+        prog_args = plist.get("ProgramArguments", [])
+        # Extract --chat-id, --project-dir, --model, --profile from ProgramArguments
+        info = {"label": label, "plist": path}
+        for i, arg in enumerate(prog_args):
+            if arg == "--chat-id" and i + 1 < len(prog_args):
+                info["chat_id"] = prog_args[i + 1]
+            elif arg == "--project-dir" and i + 1 < len(prog_args):
+                info["project_dir"] = prog_args[i + 1]
+            elif arg == "--model" and i + 1 < len(prog_args):
+                info["model"] = prog_args[i + 1]
+            elif arg == "--profile" and i + 1 < len(prog_args):
+                info["profile"] = prog_args[i + 1]
+        # Derive name from label
+        if label == _AGENT_PLIST_PREFIX:
+            info["name"] = "(legacy)"
+        elif label.startswith(_AGENT_PLIST_PREFIX + "."):
+            info["name"] = label[len(_AGENT_PLIST_PREFIX) + 1:]
+        else:
+            info["name"] = label
+        # Check running status
+        import subprocess
+        result = subprocess.run(
+            ["launchctl", "list", label],
+            capture_output=True, text=True,
+        )
+        info["running"] = result.returncode == 0
+        # Log paths
+        info["log"] = plist.get("StandardOutPath", "")
+        info["err_log"] = plist.get("StandardErrorPath", "")
+        agents.append(info)
+    return agents
+
+
+def _resolve_agent(name, agents=None):
+    """Resolve agent by name. Returns agent dict or None."""
+    if agents is None:
+        agents = _discover_agents()
+    if not agents:
+        return None
+    if not name:
+        return agents[0] if len(agents) == 1 else None
+    for a in agents:
+        if a["name"] == name or a["label"] == name:
+            return a
+    # Fuzzy match
+    for a in agents:
+        if name.lower() in a["name"].lower():
+            return a
+    return None
+
+
+def cmd_agent_list(args):
+    """List all installed launchd agents."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agents = _discover_agents()
+    _jprint({"agents": agents, "count": len(agents)})
+
+
+def cmd_agent_install(args):
+    """Install a new launchd agent for a given chat group."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    import plistlib
+
+    slug = _agent_slug(args.name)
+    label = f"{_AGENT_PLIST_PREFIX}.{slug}"
+    plist_path = os.path.join(_AGENT_PLIST_DIR, f"{label}.plist")
+
+    # Check for duplicate
+    if os.path.exists(plist_path):
+        _jprint({"error": f"Agent '{slug}' already exists", "plist": plist_path})
+        return 1
+
+    # Check for duplicate chat_id
+    for a in _discover_agents():
+        if a.get("chat_id") == args.chat_id:
+            _jprint({"error": f"Chat {args.chat_id} already managed by agent '{a['name']}'"})
+            return 1
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    agent_script = os.path.join(script_dir, "handoff_agent.py")
+    python_path = sys.executable
+    project_dir = os.path.abspath(args.project_dir or os.getcwd())
+    log_path = os.path.join(_AGENT_LOG_DIR, f"handoff-agent-{slug}.log")
+    err_path = os.path.join(_AGENT_LOG_DIR, f"handoff-agent-{slug}.err")
+
+    os.makedirs(_AGENT_LOG_DIR, exist_ok=True)
+    os.makedirs(_AGENT_PLIST_DIR, exist_ok=True)
+
+    prog_args = [
+        python_path, agent_script,
+        "--chat-id", args.chat_id,
+        "--project-dir", project_dir,
+        "--model", args.model,
+    ]
+    if args.profile:
+        prog_args += ["--profile", args.profile]
+
+    # Build environment
+    env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin",
+        "HOME": os.path.expanduser("~"),
+        "LANG": "en_US.UTF-8",
+    }
+    # API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
+    # SSL cert
+    try:
+        import certifi
+        env["SSL_CERT_FILE"] = certifi.where()
+    except ImportError:
+        import ssl
+        ca = ssl.get_default_verify_paths().cafile
+        if ca:
+            env["SSL_CERT_FILE"] = ca
+    # Proxy (crucial for GFW regions)
+    for var in ("http_proxy", "https_proxy", "all_proxy",
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        val = os.environ.get(var)
+        if val:
+            env[var] = val
+
+    plist_data = {
+        "Label": label,
+        "ProgramArguments": prog_args,
+        "WorkingDirectory": project_dir,
+        "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},
+        "ThrottleInterval": 30,
+        "StandardOutPath": log_path,
+        "StandardErrorPath": err_path,
+        "EnvironmentVariables": env,
+    }
+
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist_data, f)
+
+    # Load
+    import subprocess
+    subprocess.run(["launchctl", "load", plist_path], check=True)
+
+    _jprint({
+        "ok": True, "name": slug, "label": label,
+        "chat_id": args.chat_id, "project_dir": project_dir,
+        "model": args.model, "log": log_path, "plist": plist_path,
+    })
+
+
+def cmd_agent_status(args):
+    """Show detailed status for one agent."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agents = _discover_agents()
+    agent = _resolve_agent(getattr(args, "name", None), agents)
+    if not agent:
+        names = [a["name"] for a in agents]
+        _jprint({"error": "Agent not found", "available": names})
+        return 1
+    # Read recent log
+    log_lines = []
+    if agent.get("log") and os.path.isfile(agent["log"]):
+        try:
+            with open(agent["log"]) as f:
+                log_lines = f.readlines()[-20:]
+        except Exception:
+            pass
+    agent["recent_log"] = [l.rstrip() for l in log_lines]
+    _jprint(agent)
+
+
+def cmd_agent_stop(args):
+    """Stop a running agent."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agent = _resolve_agent(args.name)
+    if not agent:
+        _jprint({"error": f"Agent '{args.name}' not found"})
+        return 1
+    import subprocess
+    subprocess.run(
+        ["launchctl", "unload", agent["plist"]], capture_output=True)
+    _jprint({"ok": True, "name": agent["name"], "stopped": True})
+
+
+def cmd_agent_start(args):
+    """Start a stopped agent."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agent = _resolve_agent(args.name)
+    if not agent:
+        _jprint({"error": f"Agent '{args.name}' not found"})
+        return 1
+    import subprocess
+    subprocess.run(
+        ["launchctl", "load", agent["plist"]], capture_output=True)
+    _jprint({"ok": True, "name": agent["name"], "started": True})
+
+
+def cmd_agent_uninstall(args):
+    """Stop and remove an agent."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agent = _resolve_agent(args.name)
+    if not agent:
+        _jprint({"error": f"Agent '{args.name}' not found"})
+        return 1
+    import subprocess
+    subprocess.run(
+        ["launchctl", "unload", agent["plist"]], capture_output=True)
+    if os.path.isfile(agent["plist"]):
+        os.unlink(agent["plist"])
+    _jprint({"ok": True, "name": agent["name"], "removed": True})
+
+
+def cmd_agent_log(args):
+    """Print recent log lines for an agent."""
+    if sys.platform != "darwin":
+        _jprint({"error": "Agent management is macOS only"})
+        return 1
+    agent = _resolve_agent(getattr(args, "name", None))
+    if not agent:
+        _jprint({"error": "Agent not found"})
+        return 1
+    lines = getattr(args, "lines", 50)
+    log_path = agent.get("log", "")
+    if not log_path or not os.path.isfile(log_path):
+        _jprint({"error": "No log file", "path": log_path})
+        return 1
+    with open(log_path) as f:
+        all_lines = f.readlines()
+    output = [l.rstrip() for l in all_lines[-lines:]]
+    _jprint({"name": agent["name"], "log": log_path, "lines": output})
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Deterministic handoff operations")
     p.add_argument("--profile", default=None, help="Config profile name")
@@ -1940,6 +2212,38 @@ def build_parser():
     s.add_argument("--target-chat-id", required=True, type=_chat_id_type)
     s.add_argument("--message", required=True)
     s.set_defaults(func=cmd_relay)
+
+    # Agent (daemon) management
+    s = sub.add_parser("agent-list")
+    s.set_defaults(func=cmd_agent_list)
+
+    s = sub.add_parser("agent-install")
+    s.add_argument("--chat-id", required=True, type=_chat_id_type)
+    s.add_argument("--name", required=True, help="Agent slug name")
+    s.add_argument("--project-dir", default=None)
+    s.add_argument("--model", default="claude-opus-4-6")
+    s.set_defaults(func=cmd_agent_install)
+
+    s = sub.add_parser("agent-status")
+    s.add_argument("--name", default=None)
+    s.set_defaults(func=cmd_agent_status)
+
+    s = sub.add_parser("agent-stop")
+    s.add_argument("--name", required=True)
+    s.set_defaults(func=cmd_agent_stop)
+
+    s = sub.add_parser("agent-start")
+    s.add_argument("--name", required=True)
+    s.set_defaults(func=cmd_agent_start)
+
+    s = sub.add_parser("agent-uninstall")
+    s.add_argument("--name", required=True)
+    s.set_defaults(func=cmd_agent_uninstall)
+
+    s = sub.add_parser("agent-log")
+    s.add_argument("--name", default=None)
+    s.add_argument("--lines", type=int, default=50)
+    s.set_defaults(func=cmd_agent_log)
 
     return p
 

@@ -120,6 +120,13 @@ This skill supports sub-commands via arguments:
 - **`/handoff profile show`** — Show the current profile name and config file path. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff profile set-default <name>`** — Set the default config profile. Writes to `~/.handoff/default_profile`. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff init profile:<profile>`** — Run the setup wizard for a named profile instead of the default. Creates `~/.handoff/profiles/<profile>.json`.
+- **`/handoff agent`** or **`/handoff agent list`** — List all installed daemon agents. Do NOT enter Handoff mode. macOS only. Safe to run anytime.
+- **`/handoff agent install`** — Interactive: select a group, choose project dir and model, install a new launchd daemon agent. Do NOT enter Handoff mode. **CLI only**. macOS only.
+- **`/handoff agent status [name]`** — Show status and recent logs for an agent. If only one agent exists, name is optional. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff agent stop <name>`** — Stop a running agent. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff agent start <name>`** — Start a stopped agent. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff agent uninstall <name>`** — Stop and remove an agent. Do NOT enter Handoff mode. **CLI only**.
+- **`/handoff agent log [name]`** — Show recent logs for an agent. Do NOT enter Handoff mode. Safe to run anytime.
 
 Parse the argument string to determine which sub-command to execute.
 
@@ -184,6 +191,13 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff profile show` | Show current profile details |
 | `/handoff profile set-default <name>` | Set the default config profile |
 | `/handoff init profile:<profile>` | Run setup wizard for a named profile |
+| `/handoff agent` | List installed daemon agents (macOS) |
+| `/handoff agent install` | Install a new daemon agent for a chat group |
+| `/handoff agent status [name]` | Show agent status and recent logs |
+| `/handoff agent stop <name>` | Stop a running agent |
+| `/handoff agent start <name>` | Start a stopped agent |
+| `/handoff agent uninstall <name>` | Remove an installed agent |
+| `/handoff agent log [name]` | Show recent agent logs |
 
 ## Preflight Check
 

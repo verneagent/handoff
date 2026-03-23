@@ -232,3 +232,66 @@ python3 .claude/skills/handoff/scripts/upgrade.py --check
 ```
 
 The script auto-detects the install directory (resolves symlinks), downloads the latest code, syncs files, and reinstalls hooks if `hooks.json` changed. Print the output to the user. Do NOT enter Handoff mode.
+
+## Agent Management (`/handoff agent`)
+
+macOS only. Manages launchd daemon agents that run `handoff_agent.py` as background services. Each agent watches a Lark chat group and responds via Claude Agent SDK.
+
+### List Agents (`/handoff agent` or `/handoff agent list`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-list
+```
+
+Print as a formatted table with columns: Name, Chat ID, Status (running/stopped), Project Dir, Model. Do NOT enter Handoff mode.
+
+### Install Agent (`/handoff agent install`)
+
+Interactive flow:
+
+1. Run `list-groups --scope user` to get available groups.
+2. Present groups for selection (or accept group name as argument).
+3. Generate slug from group name: lowercase, replace special chars with dashes.
+4. Ask for project directory (default: current directory).
+5. Ask for model (default: claude-opus-4-6).
+6. Run:
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-install \
+  --chat-id '<CHAT_ID>' --name '<SLUG>' --project-dir '<DIR>' --model '<MODEL>'
+```
+
+This MUST run with `dangerouslyDisableSandbox: true` (calls launchctl).
+
+Print the result. Agent starts immediately and auto-restarts on crash.
+
+### Agent Status (`/handoff agent status [name]`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-status --name '<NAME>'
+```
+
+If `--name` is omitted and only one agent is installed, it uses that. If multiple agents exist and no name given, list them and ask which one.
+
+### Stop/Start Agent
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-stop --name '<NAME>'
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-start --name '<NAME>'
+```
+
+### Uninstall Agent (`/handoff agent uninstall <name>`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-uninstall --name '<NAME>'
+```
+
+Stops the agent and removes the plist file. Confirm before removing.
+
+### Agent Logs (`/handoff agent log [name]`)
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py agent-log --name '<NAME>' --lines 50
+```
+
+Shows recent log output. Each agent has its own log at `/tmp/handoff/handoff-agent-<name>.log`.
