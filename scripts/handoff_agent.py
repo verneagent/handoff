@@ -213,7 +213,7 @@ def _build_agent_options(project_dir, model, group_name=None):
     context = (
         f"You are a Handoff daemon agent running in the background. "
         f"You communicate with the user through a Lark group chat"
-        f"{f' named \"{group_name}\"' if group_name else ''}. "
+        f"{(' named ' + chr(34) + group_name + chr(34)) if group_name else ''}. "
         f"Your working directory is: {project_dir}\n"
         f"Keep responses concise — they will be displayed on mobile.\n\n"
         f"Agent management tools (run via Bash):\n"
