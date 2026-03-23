@@ -297,7 +297,8 @@ def _format_agent_output(subcmd, raw):
     return raw
 
 
-async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6"):
+async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6",
+                    chat_id=None, group_name=None):
     """Run Claude Agent SDK with the given prompt. Returns (result_text, session_id).
 
     The SDK auto-loads CLAUDE.md/AGENTS.md from cwd and ~/.claude/,
@@ -305,12 +306,22 @@ async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6
     """
     from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
 
+    # Give the agent context about its environment
+    context = (
+        f"You are a Handoff daemon agent running in the background. "
+        f"You communicate with the user through a Lark group chat"
+        f"{f' named \"{group_name}\"' if group_name else ''}. "
+        f"Your working directory is: {project_dir}\n"
+        f"Keep responses concise — they will be displayed on mobile."
+    )
+
     options = ClaudeAgentOptions(
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
         cwd=project_dir,
         model=model,
+        system_prompt=context,
     )
     if session_id:
         options.resume = session_id
@@ -377,6 +388,15 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     # Send startup card
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Daemon", silence=False)
     _log(f"Daemon started. Project: {project_dir}")
+
+    # Resolve group name for agent context
+    group_name = ""
+    try:
+        info = lark_im.get_chat_info(token, chat_id)
+        group_name = info.get("name", "")
+        _log(f"Group: {group_name}")
+    except Exception:
+        pass
 
     # Load session data for inline polling
     session = handoff_db.get_session(session_id) or {}
@@ -464,6 +484,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     project_dir=project_dir,
                     session_id=agent_session_id,
                     model=model,
+                    chat_id=chat_id,
+                    group_name=group_name,
                 )
                 if new_sid:
                     agent_session_id = new_sid
