@@ -198,116 +198,30 @@ def send_response_inline(token, chat_id, text):
         _log(f"send error: {e}")
 
 
-def _handle_builtin_command(user_message):
-    """Check if message is a built-in daemon command. Returns response string or None."""
-    import subprocess
-    msg = user_message.strip().lower()
-
-    # Map common commands to handoff_ops.py subcommands
-    cmd_map = {
-        "handoff agent list": "agent-list",
-        "handoff agent": "agent-list",
-        "agent list": "agent-list",
-        "handoff agent status": "agent-status",
-        "agent status": "agent-status",
-    }
-
-    # Agent spawn: "spawn agent ~/path" or "new agent ~/path"
-    # Match against original message (not lowered) to preserve path case
-    import re
-    spawn_match = re.match(
-        r"(?:spawn|new)\s+agent\s+(.+)", user_message.strip(), re.IGNORECASE)
-    if spawn_match:
-        project_dir = os.path.expanduser(spawn_match.group(1).strip())
-        cmd = [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
-               "agent-spawn", "--project-dir", project_dir]
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30)
-            raw = result.stdout.strip() or result.stderr.strip()
-            try:
-                data = json.loads(raw)
-                if data.get("ok"):
-                    return (
-                        f"**Agent spawned** ✓\n"
-                        f"Group: {data.get('group_name', '?')}\n"
-                        f"Dir: `{data.get('project_dir', '?')}`\n"
-                        f"PID: {data.get('pid', '?')}\n"
-                        f"Log: `{data.get('log', '?')}`"
-                    )
-                return f"Error: {data.get('error', raw)}"
-            except json.JSONDecodeError:
-                return raw
-        except Exception as e:
-            return f"Error: {e}"
-
-    for prefix, subcmd in cmd_map.items():
-        if msg == prefix or msg.startswith(prefix + " "):
-            remainder = user_message.strip()[len(prefix):].strip()
-            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"), subcmd]
-            if remainder:
-                cmd += ["--name", remainder]
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=10)
-                raw = result.stdout.strip() or result.stderr.strip()
-                return _format_agent_output(subcmd, raw)
-            except Exception as e:
-                return f"Error: {e}"
-    return None
-
-
-def _format_agent_output(subcmd, raw):
-    """Format agent command JSON output as readable markdown."""
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return raw
-
-    if subcmd == "agent-list":
-        agents = data.get("agents", [])
-        if not agents:
-            return "No agents installed."
-        lines = ["**Installed Agents**\n"]
-        for a in agents:
-            status = "Running" if a.get("running") else "Stopped"
-            lines.append(
-                f"- **{a.get('name', '?')}** — {status}\n"
-                f"  Chat: `{a.get('chat_id', '?')[:20]}...`\n"
-                f"  Dir: `{a.get('project_dir', '?')}`\n"
-                f"  Model: {a.get('model', '?')}"
-            )
-        return "\n".join(lines)
-
-    if subcmd == "agent-status":
-        status = "Running" if data.get("running") else "Stopped"
-        lines = [
-            f"**{data.get('name', '?')}** — {status}",
-            f"Chat: `{data.get('chat_id', '?')}`",
-            f"Dir: `{data.get('project_dir', '?')}`",
-            f"Model: {data.get('model', '?')}",
-        ]
-        log = data.get("recent_log", [])
-        if log:
-            lines.append(f"\n**Recent log** ({len(log)} lines):")
-            lines.append("```")
-            lines.extend(log[-10:])
-            lines.append("```")
-        return "\n".join(lines)
-
-    return raw
+    # No built-in command interception for agent operations.
+    # The Agent SDK handles all user requests naturally via Bash tool,
+    # including: agent-list, agent-spawn, agent-status, etc.
+    # Only daemon control commands (handback, clear) are intercepted
+    # in the main loop.
 
 
 def _build_agent_options(project_dir, model, group_name=None):
     """Build ClaudeAgentOptions for the daemon."""
     from claude_agent_sdk import ClaudeAgentOptions
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     context = (
         f"You are a Handoff daemon agent running in the background. "
         f"You communicate with the user through a Lark group chat"
         f"{f' named \"{group_name}\"' if group_name else ''}. "
         f"Your working directory is: {project_dir}\n"
-        f"Keep responses concise — they will be displayed on mobile."
+        f"Keep responses concise — they will be displayed on mobile.\n\n"
+        f"Agent management tools (run via Bash):\n"
+        f"- List agents: python3 {script_dir}/handoff_ops.py agent-list\n"
+        f"- Spawn agent: python3 {script_dir}/handoff_ops.py agent-spawn --project-dir <DIR>\n"
+        f"- Agent status: python3 {script_dir}/handoff_ops.py agent-status [--name <NAME>]\n"
+        f"- Stop agent: python3 {script_dir}/handoff_ops.py agent-stop --name <NAME>\n"
+        f"- Agent log: python3 {script_dir}/handoff_ops.py agent-log [--name <NAME>]\n"
     )
 
     return ClaudeAgentOptions(
@@ -498,16 +412,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             _log(f"Processing: {user_message[:80]}")
 
-            # Check for built-in commands first
-            builtin_result = _handle_builtin_command(user_message)
-            if builtin_result is not None:
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(token, chat_id, builtin_result)
-                _log("Built-in command handled.")
-                continue
-
             # Run Agent SDK (persistent session — no session end between turns)
+            # Agent handles all requests naturally, including agent management
+            # commands via Bash tool (handoff_ops.py).
             try:
                 result = await run_agent_turn(client, user_message)
 
