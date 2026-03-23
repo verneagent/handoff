@@ -84,12 +84,17 @@ install() {
         exit 1
     fi
 
-    # Get API key from environment or keychain
+    # Check auth: OAuth (claude auth login) or API key
     API_KEY="${ANTHROPIC_API_KEY:-}"
     if [[ -z "$API_KEY" ]]; then
-        echo "Warning: ANTHROPIC_API_KEY not set. The agent needs this to run."
-        echo "Set it in your shell profile or pass it here."
-        read -rp "Enter API key (or press Enter to skip): " API_KEY
+        # Check if OAuth is available (claude auth status)
+        if command -v claude &>/dev/null && claude auth status &>/dev/null 2>&1; then
+            echo "Using OAuth authentication (from 'claude auth login')."
+        else
+            echo "No authentication found."
+            echo "Either run 'claude auth login' first, or set ANTHROPIC_API_KEY."
+            read -rp "Enter API key (or press Enter to use OAuth): " API_KEY
+        fi
     fi
 
     # Stop if already running
