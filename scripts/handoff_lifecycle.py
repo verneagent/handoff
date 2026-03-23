@@ -45,7 +45,7 @@ def send_start_card(session_id, model, tool_name="Daemon"):
     body = "Handed off to Lark. Reply here to continue working."
     card = lark_im.build_card(title, body=body, color="blue")
     msg_id = lark_im.send_message(token, chat_id, card)
-    lark_im.record_sent_message(chat_id, msg_id, text=body, title=title)
+    handoff_db.record_sent_message(msg_id, text=body, title=title, chat_id=chat_id)
     return msg_id
 
 
@@ -64,7 +64,7 @@ def send_end_card(session_id, model, tool_name="Daemon", body=""):
         body = "Handing back."
     card = lark_im.build_card(title, body=body, color="grey")
     msg_id = lark_im.send_message(token, chat_id, card)
-    lark_im.record_sent_message(chat_id, msg_id, text=body, title=title)
+    handoff_db.record_sent_message(msg_id, text=body, title=title, chat_id=chat_id)
     return msg_id
 
 
