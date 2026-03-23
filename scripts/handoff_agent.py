@@ -186,6 +186,7 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
 def send_response_inline(token, chat_id, text):
     """Send a markdown card response to Lark inline (no subprocess)."""
     try:
+        wfr_mod.clear_ack_reaction()
         send_mod.send(
             token, chat_id,
             title="",
