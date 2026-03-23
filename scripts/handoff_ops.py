@@ -39,16 +39,17 @@ def _get_session_id(args=None):
     return sid
 
 
-def _require_credentials(profile=None):
-    # If no explicit profile, try to resolve from active session or environment
+def _require_credentials():
+    # Resolve profile from active session or environment — never accept an
+    # explicit profile so callers can't accidentally skip resolution.
+    sid = _get_session_id()
+    profile = None
+    if sid:
+        session = handoff_db.get_session(sid)
+        if session:
+            profile = session.get("config_profile", "default")
     if profile is None:
-        sid = _get_session_id()
-        if sid:
-            session = handoff_db.get_session(sid)
-            if session:
-                profile = session.get("config_profile", "default")
-        if profile is None:
-            profile = handoff_config.resolve_profile()
+        profile = handoff_config.resolve_profile()
     creds = handoff_config.load_credentials(profile=profile)
     if not creds:
         raise RuntimeError("no_credentials")
@@ -461,7 +462,7 @@ def cmd_activate(args):
     return 0
 
 
-def _drain_takeover_signal(worker_url, chat_id, timeout_s, profile=None):
+def _drain_takeover_signal(worker_url, chat_id, timeout_s, profile):
     if not worker_url:
         return False
     result = poll_worker_urllib(
@@ -1341,7 +1342,9 @@ def cmd_diag(args):
     # 1. Credentials & token
     diag_profile = _resolve_cmd_profile(args)
     try:
-        creds = _require_credentials(profile=diag_profile)
+        creds = handoff_config.load_credentials(profile=diag_profile)
+        if not creds:
+            raise RuntimeError("no_credentials")
         token = _require_token(creds)
         steps.append({"step": "credentials", "ok": True})
     except Exception as e:
