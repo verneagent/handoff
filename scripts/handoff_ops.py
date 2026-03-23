@@ -40,6 +40,15 @@ def _get_session_id(args=None):
 
 
 def _require_credentials(profile=None):
+    # If no explicit profile, try to resolve from active session or environment
+    if profile is None:
+        sid = _get_session_id()
+        if sid:
+            session = handoff_db.get_session(sid)
+            if session:
+                profile = session.get("config_profile", "default")
+        if profile is None:
+            profile = handoff_config.resolve_profile()
     creds = handoff_config.load_credentials(profile=profile)
     if not creds:
         raise RuntimeError("no_credentials")
