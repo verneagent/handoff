@@ -366,60 +366,20 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if not replies:
                 continue
 
-            # Process replies: download media, then pass full JSON to Agent SDK
-            # This matches normal handoff behavior — Claude sees the same data structure.
-            import subprocess as _sp
-            downloads = {}  # image_key/file_key → local path
-            for r in replies:
-                msg_id = r.get("message_id", "")
-                # Download images
-                image_key = r.get("image_key", "")
-                if image_key:
-                    for key in image_key.split(","):
-                        key = key.strip()
-                        if not key:
-                            continue
-                        try:
-                            result = _sp.run(
-                                [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
-                                 "download-image", "--image-key", key, "--message-id", msg_id],
-                                capture_output=True, text=True, timeout=30)
-                            dl = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
-                            if dl.get("path"):
-                                downloads[key] = dl["path"]
-                                _log(f"Downloaded image: {dl['path']}")
-                        except Exception as e:
-                            _log(f"Image download error: {e}")
-                # Download files
-                file_key = r.get("file_key", "")
-                if file_key:
-                    try:
-                        result = _sp.run(
-                            [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
-                             "download-file", "--file-key", file_key,
-                             "--message-id", msg_id,
-                             "--file-name", r.get("file_name", "file")],
-                            capture_output=True, text=True, timeout=30)
-                        dl = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
-                        if dl.get("path"):
-                            downloads[file_key] = dl["path"]
-                            _log(f"Downloaded file: {dl['path']}")
-                    except Exception as e:
-                        _log(f"File download error: {e}")
-
-            # Build prompt: raw JSON + download paths
-            # Claude understands the Lark message structure from SKILL.md context
-            reply_json = json.dumps(replies, ensure_ascii=False, indent=2)
-            if downloads:
-                dl_info = "\n".join(f"  {k}: {v}" for k, v in downloads.items())
-                user_message = (
-                    f"Lark message(s):\n{reply_json}\n\n"
-                    f"Downloaded files (use Read tool to view):\n{dl_info}"
-                )
+            # Pass full reply JSON to Agent SDK for natural processing.
+            # Agent handles all message types (text, images, files, replies, etc.)
+            # using its Bash tool to download media via handoff_ops.py when needed.
+            has_media = any(
+                r.get("image_key") or r.get("file_key") or r.get("msg_type") in ("image", "file")
+                for r in replies
+            )
+            if has_media or any(r.get("parent_id") for r in replies):
+                # Rich message — pass full JSON so agent sees all context
+                user_message = json.dumps(replies, ensure_ascii=False, indent=2)
             else:
-                # Simple text-only messages: just use the text directly
+                # Simple text — pass directly for cleaner prompts
                 texts = [r.get("text", "").strip() for r in replies if r.get("text")]
-                user_message = "\n".join(texts) if texts else reply_json
+                user_message = "\n".join(texts) if texts else json.dumps(replies, ensure_ascii=False)
 
             if not user_message.strip():
                 continue
