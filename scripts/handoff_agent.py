@@ -197,12 +197,88 @@ def send_response_inline(token, chat_id, text):
         _log(f"send error: {e}")
 
 
+def _handle_builtin_command(user_message):
+    """Check if message is a built-in daemon command. Returns response string or None."""
+    import subprocess
+    msg = user_message.strip().lower()
+
+    # Map common commands to handoff_ops.py subcommands
+    cmd_map = {
+        "handoff agent list": "agent-list",
+        "handoff agent": "agent-list",
+        "agent list": "agent-list",
+        "handoff agent status": "agent-status",
+        "agent status": "agent-status",
+    }
+
+    for prefix, subcmd in cmd_map.items():
+        if msg == prefix or msg.startswith(prefix + " "):
+            remainder = user_message.strip()[len(prefix):].strip()
+            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"), subcmd]
+            if remainder:
+                cmd += ["--name", remainder]
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=10)
+                raw = result.stdout.strip() or result.stderr.strip()
+                return _format_agent_output(subcmd, raw)
+            except Exception as e:
+                return f"Error: {e}"
+    return None
+
+
+def _format_agent_output(subcmd, raw):
+    """Format agent command JSON output as readable markdown."""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+    if subcmd == "agent-list":
+        agents = data.get("agents", [])
+        if not agents:
+            return "No agents installed."
+        lines = ["**Installed Agents**\n"]
+        for a in agents:
+            status = "Running" if a.get("running") else "Stopped"
+            lines.append(
+                f"- **{a.get('name', '?')}** — {status}\n"
+                f"  Chat: `{a.get('chat_id', '?')[:20]}...`\n"
+                f"  Dir: `{a.get('project_dir', '?')}`\n"
+                f"  Model: {a.get('model', '?')}"
+            )
+        return "\n".join(lines)
+
+    if subcmd == "agent-status":
+        status = "Running" if data.get("running") else "Stopped"
+        lines = [
+            f"**{data.get('name', '?')}** — {status}",
+            f"Chat: `{data.get('chat_id', '?')}`",
+            f"Dir: `{data.get('project_dir', '?')}`",
+            f"Model: {data.get('model', '?')}",
+        ]
+        log = data.get("recent_log", [])
+        if log:
+            lines.append(f"\n**Recent log** ({len(log)} lines):")
+            lines.append("```")
+            lines.extend(log[-10:])
+            lines.append("```")
+        return "\n".join(lines)
+
+    return raw
+
+
 async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6"):
-    """Run Claude Agent SDK with the given prompt. Returns (result_text, session_id)."""
+    """Run Claude Agent SDK with the given prompt. Returns (result_text, session_id).
+
+    The SDK auto-loads CLAUDE.md/AGENTS.md from cwd and ~/.claude/,
+    including skill definitions from ~/.claude/skills/.
+    """
     from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
 
     options = ClaudeAgentOptions(
-        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
         cwd=project_dir,
         model=model,
@@ -327,6 +403,15 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 break
 
             _log(f"Processing: {user_message[:80]}")
+
+            # Check for built-in commands first
+            builtin_result = _handle_builtin_command(user_message)
+            if builtin_result is not None:
+                token = lark_im.get_tenant_token(
+                    credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id, builtin_result)
+                _log("Built-in command handled.")
+                continue
 
             # Run Agent SDK
             try:
