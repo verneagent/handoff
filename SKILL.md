@@ -115,15 +115,19 @@ This skill supports sub-commands via arguments:
 - **`/handoff sidecar`** — Enter **sidecar mode**: join an existing external Lark group (not created by the bot) and only respond to bot-directed messages (@-mention, reply to bot message, or reaction/sticker). Uses the same handoff loop but filters messages and skips group modifications.
 - **`/handoff upgrade`** — Download the latest version from GitHub and install it. Reinstalls hooks if `hooks.json` changed. Reports what files were updated. Safe to run anytime. Can also run during handoff mode.
 - **`/handoff upgrade --check`** — Check if an update is available without installing. Safe to run anytime.
+- **`/handoff use:<profile>`** — Enter Handoff mode using a named config profile (e.g. `/handoff use:work`). Pass `--profile '<PROFILE>'` to `preflight.py`, `enter_handoff.py`, and all `handoff_ops.py` calls. Can be combined with group name: `/handoff use:work MyGroup`.
 - **`/handoff profile`** — List all config profiles (default + any in `~/.handoff/profiles/`). Shows which is current and which is the default. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff profile show`** — Show the current profile name and config file path. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff profile set-default <name>`** — Set the default config profile. Writes to `~/.handoff/default_profile`. Do NOT enter Handoff mode. Safe to run anytime.
+- **`/handoff init profile:<profile>`** — Run the setup wizard for a named profile instead of the default. Creates `~/.handoff/profiles/<profile>.json`.
 
 Parse the argument string to determine which sub-command to execute.
 
+**Profile syntax:** When the argument string contains `use:<name>`, extract the profile name and pass `--profile '<name>'` to all Python script invocations. Remove the `use:<name>` token from the argument string before matching other sub-commands. For example, `/handoff use:work MyGroup` → profile is `work`, group name is `MyGroup`. When `profile:<name>` is present (for init), extract it similarly.
+
 **Guard:** Before running `init`, `deinit`, `clear`, `delete_admin`, or `purge_admin`, check if handoff is currently active. If it is, refuse and tell the user: "Cannot run this command during handoff mode. Send **handback** first to return to CLI."
 
-**Sub-command implementations:** For `chats`, `chats_admin`, `status`, `delete_admin`, `purge_admin`, `deinit`, `clear`, and `diag`, read `SKILL-commands.md` in the same directory for detailed code and instructions.
+**Sub-command implementations:** For `chats`, `chats_admin`, `status`, `delete_admin`, `purge_admin`, `deinit`, `clear`, `diag`, and `profile`, read `SKILL-commands.md` in the same directory for detailed code and instructions.
 
 ## Sandbox: CRITICAL
 
@@ -175,9 +179,11 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff diag` | Run permission bridge diagnostic (test card action → poll round-trip) |
 | `/handoff upgrade` | Download and install the latest version from GitHub |
 | `/handoff upgrade --check` | Check if an update is available |
+| `/handoff use:<profile>` | Enter handoff using a named config profile |
 | `/handoff profile` | List all config profiles |
 | `/handoff profile show` | Show current profile details |
 | `/handoff profile set-default <name>` | Set the default config profile |
+| `/handoff init profile:<profile>` | Run setup wizard for a named profile |
 
 ## Preflight Check
 
@@ -185,6 +191,12 @@ Run the preflight check to verify all requirements:
 
 ```bash
 python3 scripts/preflight.py
+```
+
+If a profile was specified (via `use:<profile>`), pass `--profile '<profile>'`:
+
+```bash
+python3 scripts/preflight.py --profile '<profile>'
 ```
 
 ### For `/handoff check`
@@ -260,6 +272,8 @@ python3 scripts/enter_handoff.py --session-model '${session_model}'
 ```
 
 Pass `--mode no-ask` or `--mode new` when the user explicitly requests those modes.
+
+Pass `--profile '<PROFILE>'` when a profile was specified (via `use:<profile>`). The profile is stored in the session DB so hooks can load the correct config.
 
 Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name (e.g. `/handoff MyGroup`). This looks up the group across all bot chats and auto-detects whether it's external (sidecar) or workspace-tagged (regular). When `sidecar_mode` is true in the response, follow the sidecar loop path (use `start_and_wait.py` as in Sidecar Mode Step 4).
 
