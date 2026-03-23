@@ -117,7 +117,7 @@ async def run_agent(prompt, project_dir, session_id=None, model="claude-opus-4-6
     return result_text or "(no response)", new_session_id
 
 
-async def main_loop(chat_id, project_dir, model):
+async def main_loop(chat_id, project_dir, model, profile=None):
     """Main daemon loop."""
     # Always generate a fresh session_id for the daemon — never inherit from
     # the parent environment to avoid cross-session message leaking
@@ -127,8 +127,11 @@ async def main_loop(chat_id, project_dir, model):
     os.environ["HANDOFF_PROJECT_DIR"] = project_dir
     os.environ["HANDOFF_SESSION_TOOL"] = "Daemon"
 
+    # Resolve profile
+    resolved_profile = handoff_config.resolve_profile(explicit=profile)
+
     # Activate handoff in DB
-    credentials = handoff_config.load_credentials()
+    credentials = handoff_config.load_credentials(profile=resolved_profile)
     if not credentials:
         print("Error: No credentials configured.", file=sys.stderr)
         return 1
@@ -148,6 +151,7 @@ async def main_loop(chat_id, project_dir, model):
     handoff_lifecycle.activate(
         session_id, chat_id, model,
         operator_open_id=operator_open_id,
+        config_profile=resolved_profile,
     )
     _log(f"Activated session {session_id} for chat {chat_id}")
 
@@ -244,6 +248,7 @@ def main():
     parser.add_argument("--chat-id", required=True, help="Lark chat ID")
     parser.add_argument("--project-dir", required=True, help="Project directory")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")
+    parser.add_argument("--profile", default=None, help="Config profile name")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -251,7 +256,7 @@ def main():
         print(f"Error: {project_dir} is not a directory", file=sys.stderr)
         return 1
 
-    return asyncio.run(main_loop(args.chat_id, project_dir, args.model))
+    return asyncio.run(main_loop(args.chat_id, project_dir, args.model, args.profile))
 
 
 if __name__ == "__main__":
