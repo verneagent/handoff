@@ -2058,22 +2058,29 @@ def cmd_agent_spawn(args):
     log_path = os.path.join(log_dir, f"handoff-agent-{slug}.log")
 
     # Find a Python with claude_agent_sdk installed. sys.executable might be
-    # Xcode Python or a different version when called from Agent SDK Bash.
+    # Xcode Python (3.9) when called from Agent SDK Bash tool, which lacks
+    # the SDK. Try candidates in order: current exe, then common paths.
     import subprocess as _sp
-    python_path = sys.executable
-    try:
-        _sp.run([python_path, "-c", "import claude_agent_sdk"],
-                capture_output=True, timeout=5)
-    except Exception:
-        # Try common homebrew paths
-        for candidate in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]:
-            try:
-                _sp.run([candidate, "-c", "import claude_agent_sdk"],
-                        capture_output=True, check=True, timeout=5)
+    python_path = None
+    candidates = [
+        sys.executable,
+        "/opt/homebrew/bin/python3",
+        "/opt/homebrew/bin/python3.14",
+        "/usr/local/bin/python3",
+    ]
+    for candidate in candidates:
+        try:
+            r = _sp.run([candidate, "-c", "import claude_agent_sdk"],
+                        capture_output=True, timeout=5)
+            if r.returncode == 0:
                 python_path = candidate
                 break
-            except Exception:
-                pass
+        except Exception:
+            continue
+    if not python_path:
+        _jprint({"error": "No Python with claude_agent_sdk found",
+                 "tried": candidates})
+        return 1
 
     cmd = [
         python_path, agent_script,
