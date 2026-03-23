@@ -442,9 +442,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 continue
             user_message = "\n".join(texts)
 
-            # Check for handback (with optional "dissolve" suffix)
+            # Check for handback — flexible matching for natural language
             msg_lower = user_message.lower().strip()
-            if msg_lower.startswith("handback") or msg_lower.startswith("hand back"):
+            is_handback = (
+                msg_lower.startswith("handback")
+                or msg_lower.startswith("hand back")
+                or "handback" in msg_lower
+                or "hand back" in msg_lower
+                or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")
+            )
+            if is_handback:
                 dissolve = "dissolve" in msg_lower
                 body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
                 handoff_lifecycle.handoff_end(
