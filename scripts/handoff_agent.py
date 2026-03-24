@@ -332,13 +332,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 result = await run_agent_turn(client, user_message)
                 _log(f"Agent turn done. Result length: {len(result)}")
 
-                # Fallback: if agent didn't send (Working card still active)
+                # Always send agent's output as fallback.
+                # If agent already sent via send_to_group.py, this is a duplicate
+                # that the user can ignore. Better to double-send than not send.
                 if result and result.strip():
-                    working_msg = handoff_db.get_working_message(session_id)
-                    if working_msg:
-                        _log("Agent didn't send — daemon sending fallback")
-                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                        send_response_inline(token, chat_id, result)
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, result)
+                    _log("Response sent.")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
