@@ -34,6 +34,25 @@ The daemon gives you a prompt to enter the Main Loop. You run it exactly like no
 - On handback: exit normally. The daemon handles cleanup.
 - On /clear: exit. The daemon will restart you with a fresh session.
 
+### Agent management
+
+When the user asks to start a new agent in a different directory, use:
+
+```bash
+python3 scripts/handoff_ops.py agent-spawn --project-dir '<DIR>'
+```
+
+This discovers or creates a Lark group for the target workspace and starts a new daemon agent process. The user can then interact with that agent in its Lark group.
+
+Other management commands:
+
+```bash
+python3 scripts/handoff_ops.py agent-list              # List installed agents
+python3 scripts/handoff_ops.py agent-status [--name X]  # Show agent status
+python3 scripts/handoff_ops.py agent-stop --name X      # Stop an agent
+python3 scripts/handoff_ops.py agent-log [--name X]     # View agent logs
+```
+
 ### What you should NOT do
 
 - Run Steps A–E (daemon already did activation + start card)
