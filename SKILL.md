@@ -25,14 +25,16 @@ Before following this protocol, identify your runtime:
 
 ### Message I/O
 
-- **Do NOT call** `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` — the daemon manages the wait loop.
-- **DO use** `send_to_group.py` to send messages to Lark — environment variables (`HANDOFF_SESSION_ID` etc.) are set correctly.
+- **Use `send_to_group.py`** to send responses — same as normal handoff but without the wait. Environment variables (`HANDOFF_SESSION_ID` etc.) are set correctly.
+- **Do NOT call** `wait_for_reply.py` or `start_and_wait.py` — the daemon manages the wait loop.
+- **Do NOT call** `send_and_wait.py` — use `send_to_group.py` instead (send-only, no wait).
 - Process each message the same way as normal handoff (Step 3): download images, resolve parent_id, handle commands.
+- After completing your work, send the response via `send_to_group.py` — this is how the user sees your output.
 
 ### What you should NOT do
 
 - Enter the handoff loop (Steps A–E, Main Loop) — daemon handles this
-- Call wait scripts (wait_for_reply.py, send_and_wait.py)
+- Call wait scripts (wait_for_reply.py, send_and_wait.py, start_and_wait.py)
 - Manage handoff sessions (daemon handles activation/deactivation)
 - Handle handback/clear commands (daemon intercepts these before you see them)
 
