@@ -428,11 +428,23 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             _log(f"Processing: {user_message[:80]}")
 
             # Run Agent SDK (persistent session — no session end between turns)
-            # Agent sends messages to Lark via send_to_group.py (same as CLI).
-            # Daemon does NOT send the agent's output — agent manages sending.
+            # Agent may send messages via send_to_group.py. If it doesn't,
+            # daemon sends the agent's text output as fallback.
             try:
                 result = await run_agent_turn(client, user_message)
                 _log(f"Agent turn done. Result length: {len(result)}")
+
+                # Fallback: if agent didn't send a message (Working card
+                # still active = no send_to_group.py call), daemon sends
+                if result and len(result) > 20:
+                    # Check if working state is still set (= agent didn't send)
+                    working_msg = handoff_db.get_working_message(session_id)
+                    if working_msg:
+                        _log("Agent didn't send via send_to_group — daemon sending fallback")
+                        token = lark_im.get_tenant_token(
+                            credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, result)
+                        _log("Fallback response sent.")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
