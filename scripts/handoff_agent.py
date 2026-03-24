@@ -431,25 +431,22 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             _log(f"Processing: {user_message[:80]}")
 
             # Run Agent SDK (persistent session — no session end between turns)
-            # Agent handles all requests naturally, including agent management
-            # commands via Bash tool (handoff_ops.py).
+            # Agent sends messages to Lark via send_to_group.py (same as CLI).
+            # Daemon does NOT send the agent's output — agent manages sending.
             try:
                 result = await run_agent_turn(client, user_message)
-
-                # Send response (inline — no subprocess)
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(token, chat_id, result)
-                _log("Response sent.")
+                _log(f"Agent turn done. Result length: {len(result)}")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
-                token = lark_im.get_tenant_token(
-                    credentials["app_id"], credentials["app_secret"])
-                send_response_inline(
-                    token, chat_id,
-                    f"**Error:**\n```\n{str(e)[:500]}\n```",
-                )
+                # On error, daemon sends error message since agent can't
+                try:
+                    token = lark_im.get_tenant_token(
+                        credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id,
+                        f"**Error:**\n```\n{str(e)[:500]}\n```")
+                except Exception:
+                    pass
 
         except KeyboardInterrupt:
             running = False

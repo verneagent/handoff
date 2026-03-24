@@ -21,31 +21,20 @@ Before following this protocol, identify your runtime:
 
 ## Daemon Mode Overrides
 
-> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon manages the Lark message loop — you just process messages and produce output.
+> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon manages the Lark message wait loop — you handle message processing and sending.
 
 ### Message I/O
 
-- **Do NOT call** `send_to_group.py`, `send_and_wait.py`, `wait_for_reply.py`, or `start_and_wait.py`. The daemon handles all Lark I/O.
-- **Your text output IS the Lark message.** Whatever you respond with gets sent as a markdown card to the Lark group automatically.
-- **Do NOT describe sending** (e.g. "I have sent the content to Lark"). Just output the content directly.
-
-### What you CAN do
-
-- Use all tools normally: Read, Write, Edit, Bash, Glob, Grep
-- Call `handoff_ops.py` for management: download-image, download-file, parent-local, agent-spawn, agent-list, etc.
-- Process images: download via `handoff_ops.py download-image`, then Read the file
-- Process files: download via `handoff_ops.py download-file`, then Read the file
+- **Do NOT call** `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` — the daemon manages the wait loop.
+- **DO use** `send_to_group.py` to send messages to Lark — environment variables (`HANDOFF_SESSION_ID` etc.) are set correctly.
+- Process each message the same way as normal handoff (Step 3): download images, resolve parent_id, handle commands.
 
 ### What you should NOT do
 
-- Enter the handoff loop (Steps A–E, Main Loop)
-- Call any send/wait scripts
-- Send status cards or working cards (hooks handle this)
+- Enter the handoff loop (Steps A–E, Main Loop) — daemon handles this
+- Call wait scripts (wait_for_reply.py, send_and_wait.py)
 - Manage handoff sessions (daemon handles activation/deactivation)
-
-### Sub-commands
-
-In daemon mode, sub-commands (`/handoff agent list`, etc.) are handled by the daemon process directly. You do NOT need to parse them.
+- Handle handback/clear commands (daemon intercepts these before you see them)
 
 ## OpenCode Overrides
 
