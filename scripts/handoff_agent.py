@@ -198,13 +198,6 @@ def send_response_inline(token, chat_id, text):
         _log(f"send error: {e}")
 
 
-    # No built-in command interception for agent operations.
-    # The Agent SDK handles all user requests naturally via Bash tool,
-    # including: agent-list, agent-spawn, agent-status, etc.
-    # Only daemon control commands (handback, clear) are intercepted
-    # in the main loop.
-
-
 def _build_agent_options(project_dir, model, group_name=None):
     """Build ClaudeAgentOptions for the daemon."""
     from claude_agent_sdk import ClaudeAgentOptions
@@ -215,8 +208,12 @@ def _build_agent_options(project_dir, model, group_name=None):
         f"Working directory: {project_dir}"
     )
 
-    # Pass handoff env vars so Agent SDK Bash tool can call handoff scripts
-    handoff_env = {}
+    # Pass handoff env vars so Agent SDK Bash tool can call handoff scripts.
+    # Also prepend Homebrew to PATH so python3 resolves to the correct version
+    # (not Xcode Python 3.9 which lacks handoff dependencies).
+    handoff_env = {
+        "PATH": f"/opt/homebrew/bin:/opt/homebrew/sbin:{os.environ.get('PATH', '/usr/bin:/bin')}",
+    }
     for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
                 "HANDOFF_TMP_DIR", "http_proxy", "https_proxy", "all_proxy",
                 "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
