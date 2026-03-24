@@ -241,7 +241,12 @@ def _build_agent_options(project_dir, model, group_name=None):
         cwd=project_dir,
         model=model,
         system_prompt=context,
-        hooks={},  # Disable hooks — daemon manages its own lifecycle
+        # Disable only session lifecycle hooks (daemon manages those).
+        # Keep PostToolUse etc. for "Working..." progress cards in Lark.
+        hooks={
+            "SessionStart": [],
+            "SessionEnd": [],
+        },
     )
 
 
