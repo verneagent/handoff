@@ -16,7 +16,36 @@ Before following this protocol, identify your runtime:
 
 - **Claude Code** — you are the `claude` CLI. Follow this document as written.
 - **OpenCode** — you are the `opencode` agent. Apply the **OpenCode Overrides** section below throughout, then follow the rest of this document.
-- **Codex** or any other tool — **STOP.** This skill only supports Claude Code and OpenCode. Tell the user: "Handoff is not supported on this platform. It requires Claude Code or OpenCode."
+- **Daemon mode** — you are running inside a Handoff daemon agent (check: `HANDOFF_SESSION_TOOL` env var is `Daemon`). Apply the **Daemon Mode Overrides** section below. Do NOT enter the handoff loop or call send scripts — the daemon handles message I/O.
+- **Codex** or any other tool — **STOP.** This skill only supports Claude Code, OpenCode, and Daemon mode. Tell the user: "Handoff is not supported on this platform."
+
+## Daemon Mode Overrides
+
+> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon manages the Lark message loop — you just process messages and produce output.
+
+### Message I/O
+
+- **Do NOT call** `send_to_group.py`, `send_and_wait.py`, `wait_for_reply.py`, or `start_and_wait.py`. The daemon handles all Lark I/O.
+- **Your text output IS the Lark message.** Whatever you respond with gets sent as a markdown card to the Lark group automatically.
+- **Do NOT describe sending** (e.g. "I have sent the content to Lark"). Just output the content directly.
+
+### What you CAN do
+
+- Use all tools normally: Read, Write, Edit, Bash, Glob, Grep
+- Call `handoff_ops.py` for management: download-image, download-file, parent-local, agent-spawn, agent-list, etc.
+- Process images: download via `handoff_ops.py download-image`, then Read the file
+- Process files: download via `handoff_ops.py download-file`, then Read the file
+
+### What you should NOT do
+
+- Enter the handoff loop (Steps A–E, Main Loop)
+- Call any send/wait scripts
+- Send status cards or working cards (hooks handle this)
+- Manage handoff sessions (daemon handles activation/deactivation)
+
+### Sub-commands
+
+In daemon mode, sub-commands (`/handoff agent list`, etc.) are handled by the daemon process directly. You do NOT need to parse them.
 
 ## OpenCode Overrides
 

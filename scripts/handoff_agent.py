@@ -209,30 +209,10 @@ def _build_agent_options(project_dir, model, group_name=None):
     """Build ClaudeAgentOptions for the daemon."""
     from claude_agent_sdk import ClaudeAgentOptions
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Minimal context — SKILL.md's "Daemon Mode Overrides" section handles the rest
     context = (
-        f"You are a Handoff daemon agent. You communicate with the user "
-        f"through a Lark group chat"
-        f"{(' named ' + chr(34) + group_name + chr(34)) if group_name else ''}.\n\n"
-        f"IMPORTANT: You are running inside a daemon, NOT a normal Claude Code CLI session.\n"
-        f"The daemon handles the handoff loop (wait_for_reply/send_and_wait). "
-        f"Your text output is automatically sent to Lark as a markdown card.\n"
-        f"If you need to send additional messages, you CAN use send_to_group.py "
-        f"(environment variables are set correctly).\n"
-        f"Keep responses concise for mobile display. Use 2-space indentation in code.\n\n"
-        f"When the user sends JSON with image_key or file_key, download first:\n"
-        f"  python3 {script_dir}/handoff_ops.py download-image --image-key KEY --message-id ID\n"
-        f"  python3 {script_dir}/handoff_ops.py download-file --file-key KEY --message-id ID --file-name NAME\n"
-        f"Then use Read tool to view the downloaded file.\n"
-        f"When the user sends JSON with parent_id, fetch the parent:\n"
-        f"  python3 {script_dir}/handoff_ops.py parent-local --parent-id ID\n\n"
-        f"Working directory: {project_dir}\n\n"
-        f"Agent management tools (run via Bash):\n"
-        f"- List agents: python3 {script_dir}/handoff_ops.py agent-list\n"
-        f"- Spawn agent: python3 {script_dir}/handoff_ops.py agent-spawn --project-dir <DIR>\n"
-        f"- Agent status: python3 {script_dir}/handoff_ops.py agent-status [--name <NAME>]\n"
-        f"- Stop agent: python3 {script_dir}/handoff_ops.py agent-stop --name <NAME>\n"
-        f"- Agent log: python3 {script_dir}/handoff_ops.py agent-log [--name <NAME>]\n"
+        f"Lark group: {group_name or 'unknown'}. "
+        f"Working directory: {project_dir}"
     )
 
     # Pass handoff env vars so Agent SDK Bash tool can call handoff scripts
