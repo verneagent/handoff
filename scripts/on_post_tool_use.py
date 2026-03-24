@@ -627,8 +627,10 @@ def main():
     # Skip handoff infrastructure commands before filter check
     if tool_name == "Bash":
         command = tool_input.get("command", "")
+        description = tool_input.get("description", "")
+        combined = f"{command} {description}"
         for skip in SKIP_COMMANDS:
-            if skip in command:
+            if skip in combined:
                 return
 
     # Agent Teams events always bypass message filter
