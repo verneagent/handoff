@@ -21,22 +21,25 @@ Before following this protocol, identify your runtime:
 
 ## Daemon Mode Overrides
 
-> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon manages the Lark message wait loop — you handle message processing and sending.
+> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon has already activated the session and sent the start card. You run the Main Loop directly.
 
-### Message I/O
+### How it works
 
-- **Use `send_to_group.py`** to send responses — same as normal handoff but without the wait. Environment variables (`HANDOFF_SESSION_ID` etc.) are set correctly.
-- **Do NOT call** `wait_for_reply.py` or `start_and_wait.py` — the daemon manages the wait loop.
-- **Do NOT call** `send_and_wait.py` — use `send_to_group.py` instead (send-only, no wait).
-- Process each message the same way as normal handoff (Step 3): download images, resolve parent_id, handle commands.
-- After completing your work, send the response via `send_to_group.py` — this is how the user sees your output.
+The daemon gives you a prompt to enter the Main Loop. You run it exactly like normal handoff CLI, with ONE difference:
+
+- **Use `send_to_group.py`** instead of `send_and_wait.py` for responses (the daemon manages the outer wait loop).
+- Call `wait_for_reply.py` to receive messages — this works normally.
+- Process messages with Step 3 logic (download images, resolve parent_id, etc.)
+- Send responses with `send_to_group.py` then call `wait_for_reply.py` again.
+- On handback: exit normally. The daemon handles cleanup.
+- On /clear: exit. The daemon will restart you with a fresh session.
 
 ### What you should NOT do
 
-- Enter the handoff loop (Steps A–E, Main Loop) — daemon handles this
-- Call wait scripts (wait_for_reply.py, send_and_wait.py, start_and_wait.py)
-- Manage handoff sessions (daemon handles activation/deactivation)
-- Handle handback/clear commands (daemon intercepts these before you see them)
+- Run Steps A–E (daemon already did activation + start card)
+- Call `send_and_wait.py` (use `send_to_group.py` + `wait_for_reply.py` separately)
+- Manage sessions (activation, deactivation, tabs)
+- Call `start_and_wait.py` or `end_and_cleanup.py`
 
 ## OpenCode Overrides
 
