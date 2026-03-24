@@ -238,7 +238,10 @@ def _build_agent_options(project_dir, model, group_name=None):
     )
 
     return ClaudeAgentOptions(
-        allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        # Skill tool disabled: the handoff SKILL.md (loaded from ~/.claude/skills/)
+        # instructs Claude to use send_to_group.py, which conflicts with daemon mode
+        # where output IS the message. Agent can still run scripts via Bash.
+        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
         cwd=project_dir,
