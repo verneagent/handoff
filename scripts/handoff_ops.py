@@ -2049,6 +2049,21 @@ def cmd_agent_spawn(args):
         )
         group_name = f"{worktree}@{machine}"
 
+    # Clean up stale sessions for this chat_id before spawning
+    try:
+        old_env = os.environ.get("HANDOFF_PROJECT_DIR")
+        os.environ["HANDOFF_PROJECT_DIR"] = project_dir
+        stale = handoff_db.get_active_sessions()
+        for s in stale:
+            if s.get("chat_id") == chat_id:
+                handoff_db.unregister_session(s["session_id"])
+        if old_env:
+            os.environ["HANDOFF_PROJECT_DIR"] = old_env
+        elif "HANDOFF_PROJECT_DIR" in os.environ:
+            del os.environ["HANDOFF_PROJECT_DIR"]
+    except Exception:
+        pass
+
     # Spawn handoff_agent.py as background process
     script_dir = os.path.dirname(os.path.abspath(__file__))
     agent_script = os.path.join(script_dir, "handoff_agent.py")
