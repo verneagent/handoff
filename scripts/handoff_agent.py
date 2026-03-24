@@ -333,7 +333,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 _log(f"Agent turn done. Result length: {len(result)}")
 
                 # Fallback: if agent didn't send (Working card still active)
-                if result and len(result) > 20:
+                if result and result.strip():
                     working_msg = handoff_db.get_working_message(session_id)
                     if working_msg:
                         _log("Agent didn't send — daemon sending fallback")
