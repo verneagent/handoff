@@ -25,14 +25,15 @@ Before following this protocol, identify your runtime:
 
 ### How it works
 
-The daemon gives you a prompt to enter the Main Loop. You run it exactly like normal handoff CLI, with ONE difference:
+The daemon passes you ONE message at a time. You process it and send a response. Do NOT enter the Main Loop or call wait scripts.
 
-- **Use `send_to_group.py`** instead of `send_and_wait.py` for responses (the daemon manages the outer wait loop).
-- Call `wait_for_reply.py` to receive messages — this works normally.
-- Process messages with Step 3 logic (download images, resolve parent_id, etc.)
-- Send responses with `send_to_group.py` then call `wait_for_reply.py` again.
-- On handback: exit normally. The daemon handles cleanup.
-- On /clear: exit. The daemon will restart you with a fresh session.
+1. You receive a user message as your prompt (text or JSON with image_key/parent_id)
+2. Process it: download images, resolve parent_id, do the work
+3. Send your response via `send_to_group.py`
+4. Stop. The daemon will call you again with the next message.
+
+**Do NOT call `wait_for_reply.py`** — the daemon handles message reception.
+**Do NOT loop** — process ONE message per invocation.
 
 ### Agent management
 
@@ -55,10 +56,11 @@ python3 scripts/handoff_ops.py agent-log [--name X]     # View agent logs
 
 ### What you should NOT do
 
+- Call `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` (daemon handles waiting)
+- Enter the Main Loop or loop on your own
 - Run Steps A–E (daemon already did activation + start card)
-- Call `send_and_wait.py` (use `send_to_group.py` + `wait_for_reply.py` separately)
 - Manage sessions (activation, deactivation, tabs)
-- Call `start_and_wait.py` or `end_and_cleanup.py`
+- Call `end_and_cleanup.py`
 
 ## OpenCode Overrides
 
