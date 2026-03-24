@@ -214,20 +214,18 @@ def _build_agent_options(project_dir, model, group_name=None):
         f"You are a Handoff daemon agent. You communicate with the user "
         f"through a Lark group chat"
         f"{(' named ' + chr(34) + group_name + chr(34)) if group_name else ''}.\n\n"
-        f"CRITICAL RULES (override any conflicting instructions from skills):\n"
-        f"1. Your text output IS the message sent to Lark. Do NOT call send_to_group.py, "
-        f"send_and_wait.py, or any handoff scripts that send messages — the daemon handles "
-        f"sending your output automatically. When the user asks you to send something, "
-        f"simply output the content as your response text. Do NOT describe what you did "
-        f"(e.g. do NOT say 'I have sent the content') — just output the content itself.\n"
-        f"2. Keep responses concise for mobile display. Use 2-space indentation in code.\n"
-        f"3. When the user sends JSON with image_key or file_key, download first:\n"
-        f"   python3 {script_dir}/handoff_ops.py download-image --image-key KEY --message-id ID\n"
-        f"   python3 {script_dir}/handoff_ops.py download-file --file-key KEY --message-id ID --file-name NAME\n"
-        f"   Then use Read tool to view the downloaded file.\n"
-        f"4. When the user sends JSON with parent_id, fetch the parent message:\n"
-        f"   python3 {script_dir}/handoff_ops.py parent-local --parent-id ID\n"
-        f"   Use the parent content to understand context.\n\n"
+        f"IMPORTANT: You are running inside a daemon, NOT a normal Claude Code CLI session.\n"
+        f"The daemon handles the handoff loop (wait_for_reply/send_and_wait). "
+        f"Your text output is automatically sent to Lark as a markdown card.\n"
+        f"If you need to send additional messages, you CAN use send_to_group.py "
+        f"(environment variables are set correctly).\n"
+        f"Keep responses concise for mobile display. Use 2-space indentation in code.\n\n"
+        f"When the user sends JSON with image_key or file_key, download first:\n"
+        f"  python3 {script_dir}/handoff_ops.py download-image --image-key KEY --message-id ID\n"
+        f"  python3 {script_dir}/handoff_ops.py download-file --file-key KEY --message-id ID --file-name NAME\n"
+        f"Then use Read tool to view the downloaded file.\n"
+        f"When the user sends JSON with parent_id, fetch the parent:\n"
+        f"  python3 {script_dir}/handoff_ops.py parent-local --parent-id ID\n\n"
         f"Working directory: {project_dir}\n\n"
         f"Agent management tools (run via Bash):\n"
         f"- List agents: python3 {script_dir}/handoff_ops.py agent-list\n"
@@ -237,16 +235,23 @@ def _build_agent_options(project_dir, model, group_name=None):
         f"- Agent log: python3 {script_dir}/handoff_ops.py agent-log [--name <NAME>]\n"
     )
 
+    # Pass handoff env vars so Agent SDK Bash tool can call handoff scripts
+    handoff_env = {}
+    for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
+                "HANDOFF_TMP_DIR", "http_proxy", "https_proxy", "all_proxy",
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        val = os.environ.get(key)
+        if val:
+            handoff_env[key] = val
+
     return ClaudeAgentOptions(
-        # Skill tool disabled: the handoff SKILL.md (loaded from ~/.claude/skills/)
-        # instructs Claude to use send_to_group.py, which conflicts with daemon mode
-        # where output IS the message. Agent can still run scripts via Bash.
-        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
         cwd=project_dir,
         model=model,
         system_prompt=context,
+        env=handoff_env,
         # Disable only session lifecycle hooks (daemon manages those).
         # Keep PostToolUse etc. for "Working..." progress cards in Lark.
         hooks={
