@@ -101,12 +101,15 @@ HANDOFF_LOOP_PROMPT = (
     "and the start card has been sent. Enter the Main Loop from SKILL.md:\n\n"
     "1. Call wait_for_reply.py to wait for the first user message\n"
     "2. Process the message (Step 3)\n"
-    "3. Send your response via send_to_group.py (Step 4 — use send_to_group.py, "
-    "NOT send_and_wait.py, because the daemon manages the wait loop)\n"
+    "3. Send your response via send_to_group.py (NOT send_and_wait.py)\n"
     "4. After sending, call wait_for_reply.py again for the next message\n"
     "5. Repeat until the user says handback\n\n"
-    "IMPORTANT: Use send_to_group.py (not send_and_wait.py) for sending responses. "
-    "The session_model for this handoff is '{session_model}'.\n"
+    "IMPORTANT:\n"
+    "- Use send_to_group.py (not send_and_wait.py) for responses.\n"
+    "- The session_model is '{session_model}'.\n"
+    "- When user asks to 'start/open/spawn a new agent' in a directory, use:\n"
+    "  python3 {script_dir}/handoff_ops.py agent-spawn --project-dir '<DIR>'\n"
+    "  Do NOT use /wksp or open iTerm2 — use agent-spawn for daemon agents.\n\n"
     "Start by calling wait_for_reply.py now."
 )
 
@@ -116,7 +119,9 @@ async def run_agent_loop(project_dir, model, session_model):
     from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
 
     options = _build_agent_options(project_dir, model, session_model)
-    prompt = HANDOFF_LOOP_PROMPT.replace("{session_model}", session_model)
+    prompt = (HANDOFF_LOOP_PROMPT
+              .replace("{session_model}", session_model)
+              .replace("{script_dir}", SCRIPT_DIR))
 
     _log("Starting agent in handoff loop mode...")
 
