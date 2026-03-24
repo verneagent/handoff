@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Handoff daemon: thin supervisor that runs Agent SDK in handoff loop mode.
+"""Handoff daemon: background agent using Claude Agent SDK.
 
-The daemon activates a handoff session, then gives the Agent SDK a prompt
-that triggers the handoff skill's Main Loop. The agent handles all Lark I/O
-(wait_for_reply, send_to_group, etc.) just like normal CLI handoff.
-
-The daemon only manages:
-- Session activation/deactivation
-- Agent restart on /clear
-- Signal handling (SIGTERM/SIGINT)
-- Crash recovery (auto-restart)
+Architecture: daemon manages the message wait loop, Agent SDK processes
+each message via ClaudeSDKClient. The agent sends responses to Lark
+via send_to_group.py (same as CLI handoff). Daemon provides fallback
+if the agent doesn't send.
 
 Usage:
     python3 scripts/handoff_agent.py --chat-id <CHAT_ID> --project-dir <DIR> [--model <MODEL>]
@@ -32,7 +27,10 @@ sys.path.insert(0, SCRIPT_DIR)
 import handoff_config
 import handoff_db
 import handoff_lifecycle
+import handoff_worker
 import lark_im
+import send_to_group as send_mod
+import wait_for_reply as wfr_mod
 
 
 def _log(msg):
@@ -44,8 +42,7 @@ def _diagnose_network():
     """Log SSL and network diagnostics for debugging launchd issues."""
     import ssl
     ctx = ssl.create_default_context()
-    stats = ctx.cert_store_stats()
-    _log(f"SSL cert store: {stats}")
+    _log(f"SSL cert store: {ctx.cert_store_stats()}")
     try:
         import certifi
         _log(f"certifi CA: {certifi.where()}")
@@ -63,11 +60,102 @@ def _diagnose_network():
         _log(f"DNS resolve failed: {e}")
 
 
-def _build_agent_options(project_dir, model, session_model):
-    """Build ClaudeAgentOptions for the agent."""
+def wait_for_reply_inline(chat_id, session, profile, timeout=300):
+    """Wait for a Lark message using inline WebSocket poll."""
+    worker_url = handoff_config.load_worker_url(profile=profile)
+    if not worker_url:
+        return None
+
+    session_id = session.get("session_id", "")
+    fresh = handoff_db.get_session(session_id) if session_id else None
+    if fresh:
+        session.update(fresh)
+    since = session.get("last_checked") or str(int(time.time() * 1000) - 5000)
+
+    operator_open_id = session.get("operator_open_id", "")
+    bot_open_id = session.get("bot_open_id", "")
+    sidecar_mode = session.get("sidecar_mode", False)
+    guests = session.get("guests") or []
+    member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
+
+    deadline = None if timeout <= 0 else time.time() + timeout
+
+    def _finish(replies):
+        wfr_mod._ack_with_reaction(replies)
+        for r in replies:
+            try:
+                handoff_db.record_received_message(
+                    chat_id=chat_id, text=r.get("text", ""), title="",
+                    source_message_id=r.get("message_id", ""),
+                    message_time=r.get("create_time"))
+            except Exception:
+                pass
+        last_checked = replies[-1]["create_time"]
+        if session_id:
+            try:
+                handoff_db.set_session_last_checked(session_id, last_checked)
+            except Exception:
+                pass
+        return {"replies": replies, "count": len(replies)}
+
+    while deadline is None or time.time() < deadline:
+        try:
+            result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, profile=profile)
+            if result.get("takeover"):
+                return {"takeover": True}
+            replies = result.get("replies", [])
+            if replies:
+                replies = wfr_mod.filter_self_bot(replies, bot_open_id)
+            if replies:
+                replies = (wfr_mod.filter_by_allowed_senders(replies, operator_open_id, member_roles)
+                           if member_roles else wfr_mod.filter_by_operator(replies, operator_open_id))
+            if sidecar_mode and replies:
+                replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
+            if replies:
+                return _finish(replies)
+            if result.get("error"):
+                raise Exception(result["error"])
+            continue
+        except Exception as e:
+            _log(f"WebSocket error: {e} — falling back to HTTP")
+        try:
+            result = handoff_worker.poll_worker(worker_url, chat_id, since, profile=profile)
+            if result.get("takeover"):
+                return {"takeover": True}
+            if result.get("error"):
+                time.sleep(3)
+                continue
+            replies = result.get("replies", [])
+            if replies:
+                handoff_worker.ack_worker_replies(worker_url, chat_id, replies[-1]["create_time"], profile=profile)
+                replies = wfr_mod.filter_self_bot(replies, bot_open_id)
+                replies = (wfr_mod.filter_by_allowed_senders(replies, operator_open_id, member_roles)
+                           if member_roles else wfr_mod.filter_by_operator(replies, operator_open_id))
+                if sidecar_mode:
+                    replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
+                if replies:
+                    return _finish(replies)
+        except Exception as e:
+            _log(f"HTTP poll error: {e}")
+            time.sleep(3)
+
+    return {"timeout": True, "replies": [], "count": 0}
+
+
+def send_response_inline(token, chat_id, text):
+    """Send a markdown card response to Lark (fallback for when agent doesn't send)."""
+    try:
+        wfr_mod.clear_ack_reaction()
+        send_mod.send(token, chat_id, title="", message=text, is_card=False, color="blue")
+    except Exception as e:
+        _log(f"send error: {e}")
+
+
+def _build_agent_options(project_dir, model):
+    """Build ClaudeAgentOptions."""
     from claude_agent_sdk import ClaudeAgentOptions
 
-    # Pass handoff env vars + correct PATH so agent's Bash tool works
+    # Pass handoff env vars + correct PATH for Bash tool
     handoff_env = {
         "PATH": f"/opt/homebrew/bin:/opt/homebrew/sbin:{os.environ.get('PATH', '/usr/bin:/bin')}",
     }
@@ -85,61 +173,30 @@ def _build_agent_options(project_dir, model, session_model):
         cwd=project_dir,
         model=model,
         env=handoff_env,
-        # Disable session lifecycle hooks — daemon manages those.
-        # Keep all other hooks (PostToolUse → Working cards, etc.)
-        hooks={
-            "SessionStart": [],
-            "SessionEnd": [],
-        },
+        hooks={"SessionStart": [], "SessionEnd": []},
     )
 
 
-# The prompt that triggers the agent to enter handoff mode.
-# It invokes the handoff skill which reads SKILL.md and enters the Main Loop.
-HANDOFF_LOOP_PROMPT = (
-    "You are now in handoff daemon mode. The handoff session is already activated "
-    "and the start card has been sent. Enter the Main Loop from SKILL.md:\n\n"
-    "1. Call wait_for_reply.py to wait for the first user message\n"
-    "2. Process the message (Step 3)\n"
-    "3. Send your response via send_to_group.py (NOT send_and_wait.py)\n"
-    "4. After sending, call wait_for_reply.py again for the next message\n"
-    "5. Repeat until the user says handback\n\n"
-    "IMPORTANT:\n"
-    "- Use send_to_group.py (not send_and_wait.py) for responses.\n"
-    "- The session_model is '{session_model}'.\n"
-    "- When user asks to 'start/open/spawn a new agent' in a directory, use:\n"
-    "  python3 {script_dir}/handoff_ops.py agent-spawn --project-dir '<DIR>'\n"
-    "  Do NOT use /wksp or open iTerm2 — use agent-spawn for daemon agents.\n\n"
-    "Start by calling wait_for_reply.py now."
-)
+async def run_agent_turn(client, prompt):
+    """Send a prompt to the persistent SDK client. Returns result text."""
+    from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
 
-
-async def run_agent_loop(project_dir, model, session_model):
-    """Run the agent in handoff loop mode. Returns exit reason string."""
-    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
-
-    options = _build_agent_options(project_dir, model, session_model)
-    prompt = (HANDOFF_LOOP_PROMPT
-              .replace("{session_model}", session_model)
-              .replace("{script_dir}", SCRIPT_DIR))
-
-    _log("Starting agent in handoff loop mode...")
-
+    await client.query(prompt)
     result_text = None
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, SystemMessage) and message.subtype == "init":
-            sid = message.data.get("session_id")
-            _log(f"Agent session: {sid}")
-        elif isinstance(message, ResultMessage):
+    async for message in client.receive_response():
+        if isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0)
-            _log(f"Agent exited. Cost: ${cost:.4f}")
-
-    return result_text or ""
+            _log(f"Agent done. Cost: ${cost:.4f}")
+        elif isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    result_text = block.text
+    return result_text or "(no response)"
 
 
 async def main_loop(chat_id, project_dir, model, profile=None):
-    """Main daemon loop — supervisor that restarts agent on /clear."""
+    """Main daemon loop."""
     import uuid
     session_id = str(uuid.uuid4())
     os.environ["HANDOFF_SESSION_ID"] = session_id
@@ -176,7 +233,15 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Daemon", silence=False)
     _log(f"Daemon started. Project: {project_dir}")
 
-    session_model = model
+    group_name = ""
+    try:
+        info = lark_im.get_chat_info(token, chat_id)
+        group_name = info.get("name", "")
+        _log(f"Group: {group_name}")
+    except Exception:
+        pass
+
+    session = handoff_db.get_session(session_id) or {}
     running = True
 
     def handle_signal(sig, frame):
@@ -187,38 +252,110 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
+    # Persistent ClaudeSDKClient — session stays alive across turns
+    from claude_agent_sdk import ClaudeSDKClient
+    options = _build_agent_options(project_dir, model)
+    client = ClaudeSDKClient(options=options)
+    await client.__aenter__()
+    _log("Agent SDK client initialized")
+
+    async def _restart_client():
+        nonlocal client
+        try:
+            await client.__aexit__(None, None, None)
+        except Exception:
+            pass
+        client = ClaudeSDKClient(options=options)
+        await client.__aenter__()
+        _log("Agent SDK client restarted (session cleared)")
+
     while running:
         try:
-            # Run agent — it enters the handoff Main Loop and handles all I/O
-            result = await run_agent_loop(project_dir, model, session_model)
-            _log(f"Agent loop exited. Result: {result[:100] if result else '(empty)'}")
+            _log("Waiting for message...")
+            data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
 
-            # Check exit reason
-            result_lower = result.lower() if result else ""
-            if "handback" in result_lower or "hand back" in result_lower:
-                _log("Handback detected. Stopping daemon.")
-                running = False
-            elif any(kw in result_lower for kw in ("/clear", "clear", "清空", "重置")):
-                _log("Clear detected. Restarting agent with fresh session...")
-                # Agent exited due to /clear — restart with new session
+            if data is None or data.get("timeout"):
                 continue
+            if data.get("takeover"):
+                _log("Taken over by another session.")
+                running = False
+                break
+
+            replies = data.get("replies", [])
+            if not replies:
+                continue
+
+            # Build prompt from replies
+            has_media = any(
+                r.get("image_key") or r.get("file_key") or r.get("msg_type") in ("image", "file")
+                for r in replies
+            )
+            if has_media or any(r.get("parent_id") for r in replies):
+                user_message = json.dumps(replies, ensure_ascii=False, indent=2)
             else:
-                # Agent exited unexpectedly — restart after delay
-                _log("Agent exited unexpectedly. Restarting in 5s...")
-                await asyncio.sleep(5)
+                texts = [r.get("text", "").strip() for r in replies if r.get("text")]
+                user_message = "\n".join(texts) if texts else json.dumps(replies, ensure_ascii=False)
+
+            if not user_message.strip():
+                continue
+
+            # Check handback
+            msg_lower = user_message.lower().strip()
+            if ("handback" in msg_lower or "hand back" in msg_lower
+                    or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")):
+                dissolve = "dissolve" in msg_lower
+                body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
+                handoff_lifecycle.handoff_end(session_id, model, tool_name="Daemon", body=body, silence=False)
+                if dissolve:
+                    try:
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        if operator_open_id:
+                            lark_im.remove_chat_members(token, chat_id, [operator_open_id])
+                        lark_im.dissolve_chat(token, chat_id)
+                    except Exception as e:
+                        _log(f"Dissolve error: {e}")
+                _log("Handback received. Stopped.")
+                running = False
+                break
+
+            # Check /clear
+            if msg_lower in ("/clear", "clear", "清空", "重置"):
+                await _restart_client()
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id, "Session cleared. Starting fresh.")
+                continue
+
+            _log(f"Processing: {user_message[:80]}")
+
+            # Run Agent SDK — agent sends via send_to_group.py (env vars passed)
+            try:
+                result = await run_agent_turn(client, user_message)
+                _log(f"Agent turn done. Result length: {len(result)}")
+
+                # Fallback: if agent didn't send (Working card still active)
+                if result and len(result) > 20:
+                    working_msg = handoff_db.get_working_message(session_id)
+                    if working_msg:
+                        _log("Agent didn't send — daemon sending fallback")
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, result)
+
+            except Exception as e:
+                _log(f"Agent error: {e}")
+                try:
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, f"**Error:**\n```\n{str(e)[:500]}\n```")
+                except Exception:
+                    pass
 
         except KeyboardInterrupt:
             running = False
         except Exception as e:
-            _log(f"Agent error: {e}")
+            _log(f"Loop error: {e}")
             await asyncio.sleep(5)
 
-    # Cleanup
     try:
-        handoff_lifecycle.handoff_end(
-            session_id, model, tool_name="Daemon",
-            body="Daemon stopped.", silence=False,
-        )
+        await client.__aexit__(None, None, None)
     except Exception:
         pass
     try:
