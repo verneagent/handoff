@@ -276,10 +276,10 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     try:
         email = credentials.get("email", "")
         if email:
-            user_info = lark_im.get_user_by_email(token, email)
-            operator_open_id = user_info.get("open_id", "")
-    except Exception:
-        pass
+            operator_open_id = lark_im.lookup_open_id_by_email(token, email) or ""
+            _log(f"Operator: {email} -> {operator_open_id[:16]}...")
+    except Exception as e:
+        _log(f"Operator lookup failed: {e}")
 
     # Clean up any stale session for this chat_id before activating
     try:
