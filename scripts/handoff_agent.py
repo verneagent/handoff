@@ -238,7 +238,7 @@ def _build_agent_options(project_dir, model):
 
 
 async def run_agent_turn(client, prompt):
-    """Send a prompt to the persistent SDK client. Returns (result_text, cost)."""
+    """Send a prompt to the persistent SDK client. Returns (result_text, cost, interrupted)."""
     from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
 
     await client.query(prompt)
@@ -248,12 +248,62 @@ async def run_agent_turn(client, prompt):
         if isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
-            _log(f"Agent done. Cost: ${cost:.4f}")
+            is_error = getattr(message, "is_error", False)
+            _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
         elif isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, TextBlock):
                     result_text = block.text
     return result_text or "(no response)", cost
+
+
+def _is_esc_command(text, mentions=None):
+    """Check if a message text is an /esc command (after stripping mentions)."""
+    t = text.strip().lower()
+    for m in (mentions or []):
+        key = m.get("key", "")
+        if key:
+            t = t.replace(key.lower(), "").strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    return t in ("/esc", "esc", "cancel", "取消")
+
+
+def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
+    """Monitor for new messages while SDK is running. Runs in a thread.
+
+    Returns (esc_found: bool, buffered_replies: list).
+    Messages are acked by WS automatically, so we must buffer them.
+    """
+    buffered = []
+    esc_found = False
+
+    while not stop_event.is_set():
+        try:
+            result = handoff_worker.poll_worker_ws(
+                worker_url, chat_id, since, profile=profile,
+                max_duration=10,  # Short WS sessions so we can check stop_event
+            )
+            if result.get("takeover"):
+                buffered.append({"_takeover": True})
+                return esc_found, buffered
+
+            replies = result.get("replies", [])
+            if replies:
+                since = replies[-1].get("create_time", since)
+                for r in replies:
+                    if _is_esc_command(r.get("text", ""), r.get("mentions")):
+                        esc_found = True
+                        # Don't buffer the /esc itself
+                        return esc_found, buffered
+                    buffered.append(r)
+
+            if result.get("error"):
+                time.sleep(2)
+        except Exception as e:
+            _log(f"Monitor error: {e}")
+            time.sleep(2)
+
+    return esc_found, buffered
 
 
 async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
@@ -319,11 +369,13 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
     except Exception:
         pass
 
+    worker_url = handoff_config.load_worker_url(profile=resolved_profile)
     session = handoff_db.get_session(session_id) or {}
     running = True
     start_time = time.time()
     msg_count = 0
     total_cost = 0.0
+    pending_messages = []  # Messages buffered by monitor during SDK execution
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -352,19 +404,39 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
 
     while running:
         try:
-            _log("Waiting for message...")
-            data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
+            # Use buffered messages from monitor if available, otherwise poll
+            if pending_messages:
+                replies = pending_messages
+                pending_messages = []
+                # Apply same filters as wait_for_reply_inline
+                bot_oid = session.get("bot_open_id", "")
+                op_oid = session.get("operator_open_id", "")
+                guests = session.get("guests") or []
+                m_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
+                replies = wfr_mod.filter_self_bot(replies, bot_oid)
+                if m_roles:
+                    replies = wfr_mod.filter_by_allowed_senders(replies, op_oid, m_roles)
+                else:
+                    replies = wfr_mod.filter_by_operator(replies, op_oid)
+                if sidecar:
+                    replies = wfr_mod.filter_bot_interactions(replies, bot_oid)
+                if not replies:
+                    continue
+                _log(f"Processing {len(replies)} buffered message(s)")
+            else:
+                _log("Waiting for message...")
+                data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
 
-            if data is None or data.get("timeout"):
-                continue
-            if data.get("takeover"):
-                _log("Taken over by another session.")
-                running = False
-                break
+                if data is None or data.get("timeout"):
+                    continue
+                if data.get("takeover"):
+                    _log("Taken over by another session.")
+                    running = False
+                    break
 
-            replies = data.get("replies", [])
-            if not replies:
-                continue
+                replies = data.get("replies", [])
+                if not replies:
+                    continue
 
             # Build prompt from replies
             has_media = any(
@@ -537,17 +609,77 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
             _log(f"Processing: {user_message[:80]}")
             msg_count += 1
 
-            # Run Agent SDK — SDK returns text, we send it to Lark
+            # Run Agent SDK with concurrent /esc monitor
             try:
-                result, turn_cost = await run_agent_turn(client, user_message)
-                total_cost += turn_cost
-                _log(f"Agent turn done. Result length: {len(result)}")
+                import threading
+                monitor_since = session.get("last_checked") or str(int(time.time() * 1000))
+                stop_event = threading.Event()
 
-                # Agent process owns sending — SDK never calls send_to_group.py
-                if result and result.strip():
-                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                    send_response_inline(token, chat_id, result)
-                    _log("Response sent.")
+                # Start monitor in background thread
+                monitor_task = asyncio.get_event_loop().run_in_executor(
+                    None, _message_monitor_sync,
+                    worker_url, chat_id, monitor_since, resolved_profile, stop_event,
+                )
+                sdk_task = asyncio.create_task(run_agent_turn(client, user_message))
+
+                # Wait for SDK to finish or monitor to detect /esc
+                done, pending = await asyncio.wait(
+                    {sdk_task, monitor_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if monitor_task in done:
+                    # Monitor finished first — /esc or takeover
+                    esc_found, buffered = monitor_task.result()
+                    if esc_found:
+                        _log("Esc received — interrupting SDK")
+                        try:
+                            await client.interrupt()
+                        except Exception as e:
+                            _log(f"interrupt error: {e}")
+                        # Wait for SDK to finish after interrupt (it will emit ResultMessage)
+                        try:
+                            await asyncio.wait_for(sdk_task, timeout=30)
+                        except asyncio.TimeoutError:
+                            _log("SDK did not stop after interrupt, restarting client")
+                            sdk_task.cancel()
+                            await _restart_client()
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, "Operation cancelled.")
+                    else:
+                        # Takeover or monitor ended without esc — get SDK result
+                        result, turn_cost = await sdk_task
+                        total_cost += turn_cost
+                        if result and result.strip():
+                            token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                            send_response_inline(token, chat_id, result)
+                    # Inject buffered messages for next iteration
+                    if buffered:
+                        takeover_msgs = [m for m in buffered if m.get("_takeover")]
+                        if takeover_msgs:
+                            _log("Taken over by another session (from monitor).")
+                            running = False
+                            break
+                        pending_messages.extend(buffered)
+                else:
+                    # SDK finished first — stop monitor
+                    stop_event.set()
+                    result, turn_cost = sdk_task.result()
+                    total_cost += turn_cost
+                    _log(f"Agent turn done. Result length: {len(result)}")
+
+                    if result and result.strip():
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, result)
+                        _log("Response sent.")
+
+                    # Collect any messages the monitor saw before we stopped it
+                    try:
+                        _, buffered = await asyncio.wait_for(monitor_task, timeout=15)
+                        if buffered:
+                            pending_messages.extend(buffered)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
 
                 # Reset Working card to Done after agent turn completes
                 try:
