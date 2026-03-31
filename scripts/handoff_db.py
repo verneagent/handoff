@@ -847,6 +847,20 @@ def record_sent_message(message_id, text="", title="", chat_id=None):
         conn.close()
 
 
+def count_sent_messages(chat_id, since_ms):
+    """Count messages sent to chat_id since a given timestamp (ms)."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM messages"
+            " WHERE chat_id = ? AND direction = 'sent' AND message_time >= ?",
+            (chat_id, since_ms),
+        ).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
 def record_received_message(
     chat_id,
     text="",

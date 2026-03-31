@@ -506,10 +506,20 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             msg_count += 1
 
             # Run Agent SDK — agent sends via send_to_group.py per SKILL.md protocol
+            turn_start_ms = int(time.time() * 1000)
             try:
                 result, turn_cost = await run_agent_turn(client, user_message)
                 total_cost += turn_cost
                 _log(f"Agent turn done. Result length: {len(result)}")
+
+                # If the agent didn't send via send_to_group.py, send as fallback
+                agent_sent = handoff_db.count_sent_messages(chat_id, turn_start_ms)
+                if agent_sent > 0:
+                    _log(f"Agent sent {agent_sent} message(s).")
+                elif result and result.strip():
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, result)
+                    _log("Fallback send (agent didn't call send_to_group.py).")
 
                 # Reset Working card to Done after agent turn completes
                 try:
