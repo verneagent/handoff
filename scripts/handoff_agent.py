@@ -616,7 +616,7 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                 stop_event = threading.Event()
 
                 # Start monitor in background thread
-                monitor_task = asyncio.get_event_loop().run_in_executor(
+                monitor_task = asyncio.get_running_loop().run_in_executor(
                     None, _message_monitor_sync,
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
                 )
