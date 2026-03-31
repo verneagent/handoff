@@ -288,13 +288,12 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     except Exception as e:
         _log(f"Operator lookup failed: {e}")
 
-    # Clean up any stale session for this chat_id before activating
+    # Clean up any session holding this chat_id before activating
     try:
-        existing = handoff_db.get_active_sessions()
-        for s in existing:
-            if s.get("chat_id") == chat_id:
-                _log(f"Cleaning stale session {s['session_id']} for chat {chat_id}")
-                handoff_db.deactivate_handoff(s["session_id"])
+        owner = handoff_db.get_chat_owner_session(chat_id)
+        if owner:
+            _log(f"Cleaning stale session {owner} for chat {chat_id}")
+            handoff_db.deactivate_handoff(owner)
     except Exception as e:
         _log(f"Stale session cleanup error: {e}")
 
