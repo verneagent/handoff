@@ -466,19 +466,11 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             _log(f"Processing: {user_message[:80]}")
             msg_count += 1
 
-            # Run Agent SDK — agent sends via send_to_group.py (env vars passed)
+            # Run Agent SDK — agent sends via send_to_group.py per SKILL.md protocol
             try:
                 result, turn_cost = await run_agent_turn(client, user_message)
                 total_cost += turn_cost
                 _log(f"Agent turn done. Result length: {len(result)}")
-
-                # Always send agent's output as fallback.
-                # If agent already sent via send_to_group.py, this is a duplicate
-                # that the user can ignore. Better to double-send than not send.
-                if result and result.strip():
-                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                    send_response_inline(token, chat_id, result)
-                    _log("Response sent.")
 
                 # Reset Working card to Done after agent turn completes
                 try:
