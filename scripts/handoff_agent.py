@@ -368,9 +368,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 parts = user_message.strip().split(None, 1)
                 if len(parts) >= 2:
                     new_model = parts[1].strip()
+                    old_model = model
                     model = new_model
                     state["options"] = _build_agent_options(project_dir, model)
                     await _restart_client()
+                    # Update tabs to reflect new model name
+                    try:
+                        handoff_lifecycle._run_tabs("end", session_id, old_model)
+                        handoff_lifecycle._run_tabs("start", session_id, model)
+                    except Exception:
+                        pass
                     token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                     send_response_inline(token, chat_id, f"Model switched to **{model}**. Session cleared.")
                 else:
