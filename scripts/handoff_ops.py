@@ -101,19 +101,7 @@ def _clean_profile_env():
 
 
 def _require_active_chat_id():
-    # Allow direct chat_id override (used by agent mode)
-    direct = os.environ.get("HANDOFF_CHAT_ID", "").strip()
-    if direct:
-        return direct
-    sid = _get_session_id()
-    if not sid:
-        raise RuntimeError("missing_session_id")
-    session = handoff_db.get_session(sid)
-    if not session:
-        raise RuntimeError("no_active_handoff")
-    chat_id = session.get("chat_id", "")
-    if not chat_id:
-        raise RuntimeError("missing_chat_id")
+    chat_id, _, _ = handoff_config.resolve_chat_id()
     return chat_id
 
 

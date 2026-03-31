@@ -214,6 +214,7 @@ def _build_agent_options(project_dir, model, chat_id=""):
         "USER": os.environ.get("USER", ""),
         "HANDOFF_SKILL_DIR": skill_dir,
         "HANDOFF_CHAT_ID": chat_id,
+        "HANDOFF_CONFIG_PROFILE": os.environ.get("HANDOFF_CONFIG_PROFILE", "default"),
     }
     # Forward session/proxy vars that hooks and scripts need
     for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
@@ -266,6 +267,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     os.environ["HANDOFF_SESSION_TOOL"] = "Claude Agent SDK"
 
     resolved_profile = handoff_config.resolve_profile(explicit=profile)
+    os.environ["HANDOFF_CONFIG_PROFILE"] = resolved_profile
+    os.environ["HANDOFF_CHAT_ID"] = chat_id
     _diagnose_network()
 
     credentials = handoff_config.load_credentials(profile=resolved_profile)

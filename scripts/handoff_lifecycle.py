@@ -75,7 +75,6 @@ def reset_working_card(session_id):
     """Update the 'Working...' card to 'Done ✓' and clear state/stop flag."""
     import fcntl
 
-    session = handoff_db.get_session(session_id)
     tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
     os.makedirs(tmp_dir, exist_ok=True)
     lock_path = os.path.join(tmp_dir, f"working-{session_id}.lock")
@@ -86,7 +85,14 @@ def reset_working_card(session_id):
             msg_id = handoff_db.get_working_message(session_id)
             if msg_id:
                 try:
-                    token = _get_token(session)
+                    # Try session-based token first, fall back to resolve_chat_id
+                    session = handoff_db.get_session(session_id)
+                    token = _get_token(session) if session else None
+                    if not token:
+                        _, _, profile = handoff_config.resolve_chat_id(session_id)
+                        creds = handoff_config.load_credentials(profile=profile)
+                        if creds:
+                            token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
                     if token:
                         _, created_at, _ = handoff_db.get_working_state(session_id)
                         elapsed = int(time.time()) - created_at if created_at else 0

@@ -81,26 +81,19 @@ def resolve_session_context():
     if not session_id:
         raise RuntimeError("HANDOFF_SESSION_ID is not set")
 
-    session = resolve_session(session_id)
-    if not session:
-        raise RuntimeError(f"No active session for {session_id}")
+    chat_id, session, profile = handoff_config.resolve_chat_id(session_id)
 
-    profile = session.get("config_profile", "default")
     credentials = handoff_config.load_credentials(profile=profile)
     if not credentials:
         raise RuntimeError("No credentials configured")
 
     token = get_tenant_token(credentials["app_id"], credentials["app_secret"])
 
-    chat_id = session.get("chat_id")
-    if not chat_id:
-        raise RuntimeError(f"Session {session_id} has no chat_id")
-
     return {
         "token": token,
         "session_id": session_id,
         "chat_id": chat_id,
-        "session": session,
+        "session": session or {"chat_id": chat_id, "sidecar_mode": False},
     }
 
 
