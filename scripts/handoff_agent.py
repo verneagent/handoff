@@ -174,17 +174,25 @@ def _build_agent_options(project_dir, model):
             "type": "preset",
             "preset": "claude_code",
             "append": (
-                "\n\nYou are chatting with a user via Lark (Feishu) group chat. "
-                "Messages arrive as JSON with fields like text, image_key, file_key, parent_id, msg_type. "
-                "When a message has image_key, download each image with "
-                "`python3 scripts/handoff_ops.py download-image --image-key '<KEY>' --message-id '<MSG_ID>'` "
-                "then Read the file to see it before responding. "
+                "\n\nYou are a Handoff agent powered by Claude Agent SDK, chatting with "
+                "a user via Lark (Feishu) group chat. You are NOT running in a terminal "
+                "or CLI — you are a background agent process.\n\n"
+                "## Message handling\n"
+                "Messages arrive as JSON with fields like text, image_key, file_key, "
+                "parent_id, msg_type. When a message has image_key, download each image "
+                "with `python3 scripts/handoff_ops.py download-image --image-key '<KEY>' "
+                "--message-id '<MSG_ID>'` then Read the file to see it before responding. "
                 "When a message has file_key, download with "
-                "`python3 scripts/handoff_ops.py download-file --file-key '<KEY>' --message-id '<MSG_ID>' --file-name '<NAME>'` "
-                "then Read it. "
+                "`python3 scripts/handoff_ops.py download-file --file-key '<KEY>' "
+                "--message-id '<MSG_ID>' --file-name '<NAME>'` then Read it. "
                 "When a message has parent_id, resolve context with "
-                "`python3 scripts/handoff_ops.py parent-local --parent-id '<ID>'`. "
-                "Send responses via `python3 scripts/send_to_group.py '<message>'`."
+                "`python3 scripts/handoff_ops.py parent-local --parent-id '<ID>'`.\n\n"
+                "## Responses\n"
+                "Send responses via `python3 scripts/send_to_group.py '<message>'`. "
+                "Use 2-space indentation in code blocks for mobile readability.\n\n"
+                "## Built-in commands (handled by daemon, not you)\n"
+                "These commands are intercepted before reaching you: handback, /clear, "
+                "/model <name>, /esc. Do not try to handle them yourself."
             ),
         },
         cwd=project_dir,
@@ -280,8 +288,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
     # Persistent ClaudeSDKClient — session stays alive across turns
     from claude_agent_sdk import ClaudeSDKClient
-    options = _build_agent_options(project_dir, model)
-    client = ClaudeSDKClient(options=options)
+    state = {"options": _build_agent_options(project_dir, model)}
+    client = ClaudeSDKClient(options=state["options"])
     await client.__aenter__()
     _log("Agent SDK client initialized")
 
@@ -291,7 +299,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             await client.__aexit__(None, None, None)
         except Exception:
             pass
-        client = ClaudeSDKClient(options=options)
+        client = ClaudeSDKClient(options=state["options"])
         await client.__aenter__()
         _log("Agent SDK client restarted (session cleared)")
 
@@ -349,6 +357,28 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 await _restart_client()
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 send_response_inline(token, chat_id, "Session cleared. Starting fresh.")
+                continue
+
+            # Check /model — switch model dynamically
+            if msg_lower.startswith("/model") or msg_lower.startswith("model "):
+                parts = user_message.strip().split(None, 1)
+                if len(parts) >= 2:
+                    new_model = parts[1].strip()
+                    model = new_model
+                    state["options"] = _build_agent_options(project_dir, model)
+                    await _restart_client()
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, f"Model switched to **{model}**. Session cleared.")
+                else:
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, f"Current model: **{model}**\n\nUsage: `/model claude-sonnet-4-6`")
+                continue
+
+            # Check /esc — cancel current operation (no-op if idle)
+            if msg_lower in ("/esc", "esc", "cancel", "取消"):
+                await _restart_client()
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id, "Operation cancelled. Ready for next message.")
                 continue
 
             _log(f"Processing: {user_message[:80]}")
