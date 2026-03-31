@@ -13,13 +13,52 @@ Requirements:
     pip install claude-agent-sdk
 """
 
+import os
+import sys
+
+# Ensure we're running on a Python with claude_agent_sdk.
+# On some machines (e.g. macOS with Xcode), `python3` resolves to a system
+# Python that lacks the SDK. Try to find a better interpreter and re-exec.
+def _ensure_sdk():
+    try:
+        import claude_agent_sdk  # noqa: F401
+        return  # All good
+    except ImportError:
+        pass
+    # Search common locations for a python3 that has the SDK
+    import shutil
+    import subprocess
+    candidates = [
+        shutil.which("python3.14"),
+        shutil.which("python3.13"),
+        shutil.which("python3.12"),
+        "/opt/homebrew/bin/python3",
+        "/usr/local/bin/python3",
+    ]
+    for candidate in candidates:
+        if not candidate or candidate == sys.executable:
+            continue
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            rc = subprocess.call(
+                [candidate, "-c", "import claude_agent_sdk"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if rc == 0:
+                os.execv(candidate, [candidate] + sys.argv)
+        except Exception:
+            continue
+    print("Error: claude_agent_sdk not found in any Python interpreter.", file=sys.stderr)
+    sys.exit(1)
+
+_ensure_sdk()
+
 import argparse
 import asyncio
 import json
-import os
 import re
 import signal
-import sys
 import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
