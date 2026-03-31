@@ -271,37 +271,81 @@ def _is_esc_command(text, mentions=None):
 def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
     """Monitor for new messages while SDK is running. Runs in a thread.
 
+    Uses a single persistent WS connection with short recv timeouts to
+    check stop_event between receives — no reconnection overhead.
+
     Returns (esc_found: bool, buffered_replies: list).
     Messages are acked by WS automatically, so we must buffer them.
     """
+    import socket as _socket
+
     buffered = []
     esc_found = False
 
-    while not stop_event.is_set():
-        try:
-            result = handoff_worker.poll_worker_ws(
-                worker_url, chat_id, since, profile=profile,
-                max_duration=30,  # Aligned with WS keepalive; checks stop_event between cycles
-            )
-            if result.get("takeover"):
+    do_key = f"chat:{chat_id}"
+    ws_url = worker_url.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url += f"/ws/{do_key}"
+    if since:
+        ws_url += f"?since={since}"
+
+    api_key = handoff_config.load_api_key(profile)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    ws = handoff_worker._WebSocket(ws_url, headers=headers)
+    try:
+        ws.connect(timeout=10)
+    except Exception as e:
+        _log(f"Monitor WS connect failed: {e}")
+        return esc_found, buffered
+
+    last_ping = time.time()
+    try:
+        while not stop_event.is_set():
+            try:
+                msg = ws.recv(timeout=5)  # Short timeout to check stop_event
+            except _socket.timeout:
+                # Send keepalive ping every ~25s to keep proxies happy
+                if time.time() - last_ping > 25:
+                    try:
+                        ws.send(json.dumps({"ping": True}))
+                        last_ping = time.time()
+                    except Exception:
+                        break
+                continue
+
+            if msg is None:  # Close frame
+                break
+
+            try:
+                data = json.loads(msg)
+            except json.JSONDecodeError:
+                continue
+
+            if data.get("pong"):
+                continue
+
+            if data.get("takeover"):
                 buffered.append({"_takeover": True})
                 return esc_found, buffered
 
-            replies = result.get("replies", [])
+            replies = data.get("replies", [])
             if replies:
-                since = replies[-1].get("create_time", since)
+                # Ack so worker doesn't re-send
+                last = replies[-1].get("create_time", "")
+                if last:
+                    try:
+                        ws.send(json.dumps({"ack": last}))
+                    except Exception:
+                        pass
                 for r in replies:
                     if _is_esc_command(r.get("text", ""), r.get("mentions")):
                         esc_found = True
-                        # Don't buffer the /esc itself
                         return esc_found, buffered
                     buffered.append(r)
-
-            if result.get("error"):
-                time.sleep(2)
-        except Exception as e:
-            _log(f"Monitor error: {e}")
-            time.sleep(2)
+    except Exception as e:
+        _log(f"Monitor error: {e}")
+    finally:
+        ws.close()
 
     return esc_found, buffered
 
