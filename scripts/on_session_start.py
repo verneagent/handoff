@@ -55,6 +55,11 @@ def warn(msg):
     _log(msg)
 
 
+def _is_agent_mode():
+    """Check if running inside Claude Agent SDK (not CLI)."""
+    return os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK"
+
+
 def main():
     try:
         hook_input = json.loads(sys.stdin.read())
@@ -64,6 +69,12 @@ def main():
 
     session_id = hook_input.get("session_id", "")
     warn(f"hook fired: session_id={session_id!r}, keys={list(hook_input.keys())}")
+
+    # In agent mode, the daemon manages lifecycle (env vars, activation, cards).
+    # Skip CLI-specific setup but let the hook run cleanly.
+    if _is_agent_mode():
+        warn("agent mode detected — skipping CLI-specific setup")
+        return
 
     # Persist session_id and project dir as env vars for subsequent Bash commands
     env_file = os.environ.get("CLAUDE_ENV_FILE")

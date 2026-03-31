@@ -23,12 +23,23 @@ def warn(msg):
     print(f"[handoff] {msg}", file=sys.stderr)
 
 
+def _is_agent_mode():
+    """Check if running inside Claude Agent SDK (not CLI)."""
+    return os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK"
+
+
 def main():
     try:
         hook_input = json.loads(sys.stdin.read())
     except Exception as e:
         warn(f"invalid SessionEnd hook input JSON: {e}")
         hook_input = {}
+
+    # In agent mode, the daemon manages lifecycle (deactivation, cards).
+    # Skip CLI-specific cleanup.
+    if _is_agent_mode():
+        warn("agent mode detected — skipping CLI-specific cleanup")
+        return
 
     # Restore terminal notifications (safe to call even if not silenced)
     try:

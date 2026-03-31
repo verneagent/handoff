@@ -31,7 +31,7 @@ def _get_token(session=None):
     return lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
 
 
-def send_start_card(session_id, model, tool_name="Daemon"):
+def send_start_card(session_id, model, tool_name="Claude Agent SDK"):
     """Send the handoff start card to the Lark chat."""
     session = handoff_db.get_session(session_id)
     if not session:
@@ -43,13 +43,15 @@ def send_start_card(session_id, model, tool_name="Daemon"):
 
     title = f"Handoff from {tool_name} ({model})"
     body = "Handed off to Lark. Reply here to continue working."
-    card = lark_im.build_card(title, body=body, color="blue")
+    # Green for CLI, blue for Agent SDK — lets users distinguish modes at a glance
+    color = "blue" if tool_name == "Claude Agent SDK" else "green"
+    card = lark_im.build_card(title, body=body, color=color)
     msg_id = lark_im.send_message(token, chat_id, card)
     handoff_db.record_sent_message(msg_id, text=body, title=title, chat_id=chat_id)
     return msg_id
 
 
-def send_end_card(session_id, model, tool_name="Daemon", body=""):
+def send_end_card(session_id, model, tool_name="Claude Agent SDK", body=""):
     """Send the handoff end card to the Lark chat."""
     session = handoff_db.get_session(session_id)
     if not session:
@@ -61,8 +63,9 @@ def send_end_card(session_id, model, tool_name="Daemon", body=""):
 
     title = f"Hand back to {tool_name}"
     if not body:
-        body = "Handing back."
-    card = lark_im.build_card(title, body=body, color="grey")
+        body = "Handing back to CLI."
+    color = "blue" if tool_name == "Claude Agent SDK" else "green"
+    card = lark_im.build_card(title, body=body, color=color)
     msg_id = lark_im.send_message(token, chat_id, card)
     handoff_db.record_sent_message(msg_id, text=body, title=title, chat_id=chat_id)
     return msg_id
@@ -129,8 +132,21 @@ def deactivate(session_id):
     return handoff_db.deactivate_handoff(session_id)
 
 
-def handoff_start(session_id, model, tool_name="Daemon", silence=False):
-    """Full handoff start sequence: optional silence → status card.
+def _run_tabs(action, session_id, model):
+    """Run tabs-start or tabs-end via handoff_ops.py."""
+    import subprocess
+    cmd = [
+        sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
+        f"tabs-{action}", "--session-model", model,
+    ]
+    try:
+        subprocess.run(cmd, timeout=10, capture_output=True)
+    except Exception:
+        pass
+
+
+def handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False):
+    """Full handoff start sequence: optional silence → tabs → status card.
 
     Returns the message_id of the start card, or None on failure.
     """
@@ -144,10 +160,11 @@ def handoff_start(session_id, model, tool_name="Daemon", silence=False):
         except Exception:
             pass
 
+    _run_tabs("start", session_id, model)
     return send_start_card(session_id, model, tool_name)
 
 
-def handoff_end(session_id, model, tool_name="Daemon", body="",
+def handoff_end(session_id, model, tool_name="Claude Agent SDK", body="",
                 dissolve=False, silence=True):
     """Full handoff end sequence: working reset → end card → deactivate → optional silence.
 
@@ -155,6 +172,7 @@ def handoff_end(session_id, model, tool_name="Daemon", body="",
     """
     reset_working_card(session_id)
     send_end_card(session_id, model, tool_name, body)
+    _run_tabs("end", session_id, model)
 
     chat_id = deactivate(session_id)
 

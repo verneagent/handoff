@@ -1001,34 +1001,23 @@ def cmd_tabs_list(args):
 
 def cmd_send_status_card(args):
     """Send a handoff start or handback card with auto-resolved tool/model."""
-    creds = _require_credentials()
-    token = _require_token(creds)
+    import handoff_lifecycle
+
     chat_id, tool, model = _session_tool_model(args)
     if not chat_id:
         raise RuntimeError("missing_chat_id")
 
+    session_id = os.environ.get("HANDOFF_SESSION_ID", "")
     card_type = args.card_type  # "start" or "end"
     if card_type == "start":
+        msg_id = handoff_lifecycle.send_start_card(session_id, model, tool_name=tool)
         title = f"Handoff from {tool} ({model})"
-        body = (
-            "Handed off to Lark. Reply here to continue working with "
-            f"{tool.lower()}. Send **handback** to return to CLI."
-        )
-        color = "green"
     elif card_type == "end":
-        body_text = args.body or "Handing back to CLI."
+        body_text = args.body or ""
+        msg_id = handoff_lifecycle.send_end_card(session_id, model, tool_name=tool, body=body_text)
         title = f"Hand back to {tool}"
-        body = body_text
-        color = "green"
     else:
         raise RuntimeError(f"unknown card_type: {card_type}")
-
-    card = lark_im.build_card(title, body=body, color=color)
-    msg_id = lark_im.send_message(token, chat_id, card)
-    try:
-        handoff_db.record_sent_message(msg_id, text=body, title=title, chat_id=chat_id)
-    except Exception:
-        pass
 
     _jprint(
         {"ok": True, "chat_id": chat_id, "title": title, "tool": tool, "model": model}

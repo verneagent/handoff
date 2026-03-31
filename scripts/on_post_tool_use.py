@@ -632,6 +632,10 @@ def main():
         for skip in SKIP_COMMANDS:
             if skip in combined:
                 return
+        # Skip reply-polling commands (Claude uses various descriptions
+        # like "Check for reply", "Check reply after 5 min", etc.)
+        if "reply" in description.lower() and ("check" in description.lower() or "poll" in description.lower() or "wait" in description.lower()):
+            return
 
     # Agent Teams events always bypass message filter
     ALWAYS_FORWARD = {"TeamCreate", "SendMessage", "TeamDelete"}

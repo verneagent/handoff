@@ -170,10 +170,26 @@ def _build_agent_options(project_dir, model):
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
         permission_mode="bypassPermissions",
+        system_prompt={
+            "type": "preset",
+            "preset": "claude_code",
+            "append": (
+                "\n\nYou are chatting with a user via Lark (Feishu) group chat. "
+                "Messages arrive as JSON with fields like text, image_key, file_key, parent_id, msg_type. "
+                "When a message has image_key, download each image with "
+                "`python3 scripts/handoff_ops.py download-image --image-key '<KEY>' --message-id '<MSG_ID>'` "
+                "then Read the file to see it before responding. "
+                "When a message has file_key, download with "
+                "`python3 scripts/handoff_ops.py download-file --file-key '<KEY>' --message-id '<MSG_ID>' --file-name '<NAME>'` "
+                "then Read it. "
+                "When a message has parent_id, resolve context with "
+                "`python3 scripts/handoff_ops.py parent-local --parent-id '<ID>'`. "
+                "Send responses via `python3 scripts/send_to_group.py '<message>'`."
+            ),
+        },
         cwd=project_dir,
         model=model,
         env=handoff_env,
-        hooks={"SessionStart": [], "SessionEnd": []},
     )
 
 
@@ -201,7 +217,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     session_id = str(uuid.uuid4())
     os.environ["HANDOFF_SESSION_ID"] = session_id
     os.environ["HANDOFF_PROJECT_DIR"] = project_dir
-    os.environ["HANDOFF_SESSION_TOOL"] = "Daemon"
+    os.environ["HANDOFF_SESSION_TOOL"] = "Claude Agent SDK"
 
     resolved_profile = handoff_config.resolve_profile(explicit=profile)
     _diagnose_network()
@@ -230,7 +246,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     )
     _log(f"Activated session {session_id} for chat {chat_id}")
 
-    handoff_lifecycle.handoff_start(session_id, model, tool_name="Daemon", silence=False)
+    handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
     _log(f"Daemon started. Project: {project_dir}")
 
     group_name = ""
@@ -305,7 +321,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")):
                 dissolve = "dissolve" in msg_lower
                 body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
-                handoff_lifecycle.handoff_end(session_id, model, tool_name="Daemon", body=body, silence=False)
+                handoff_lifecycle.handoff_end(session_id, model, tool_name="Claude Agent SDK", body=body, silence=False)
                 if dissolve:
                     try:
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])

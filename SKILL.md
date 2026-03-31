@@ -16,12 +16,12 @@ Before following this protocol, identify your runtime:
 
 - **Claude Code** — you are the `claude` CLI. Follow this document as written.
 - **OpenCode** — you are the `opencode` agent. Apply the **OpenCode Overrides** section below throughout, then follow the rest of this document.
-- **Daemon mode** — you are running inside a Handoff daemon agent (check: `HANDOFF_SESSION_TOOL` env var is `Daemon`). Apply the **Daemon Mode Overrides** section below. Do NOT enter the handoff loop or call send scripts — the daemon handles message I/O.
-- **Codex** or any other tool — **STOP.** This skill only supports Claude Code, OpenCode, and Daemon mode. Tell the user: "Handoff is not supported on this platform."
+- **Agent mode** — you are running inside a Handoff agent process via Claude Agent SDK (check: `HANDOFF_SESSION_TOOL` env var is `Claude Agent SDK`). Apply the **Agent Mode Overrides** section below. Do NOT enter the handoff loop or call wait scripts — the agent process handles message I/O.
+- **Codex** or any other tool — **STOP.** This skill only supports Claude Code, OpenCode, and Agent mode. Tell the user: "Handoff is not supported on this platform."
 
-## Daemon Mode Overrides
+## Agent Mode Overrides
 
-> **Daemon mode only.** When `HANDOFF_SESSION_TOOL=Daemon` is set, you are running inside a `handoff_agent.py` daemon process. The daemon has already activated the session and sent the start card. You run the Main Loop directly.
+> **Agent mode only.** When `HANDOFF_SESSION_TOOL=Claude Agent SDK` is set, you are running inside a `handoff_agent.py` agent process. The agent has already activated the session and sent the start card. You run the Main Loop directly.
 
 ### How it works
 
