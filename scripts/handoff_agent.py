@@ -438,6 +438,7 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
     msg_count = 0
     total_cost = 0.0
     pending_messages = []  # Messages buffered by monitor during SDK execution
+    _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -466,6 +467,16 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
 
     while running:
         try:
+            # Ensure previous monitor is fully stopped before opening new WS.
+            # Without this, two WS connections overlap and worker broadcasts
+            # messages to both, causing duplicate command responses.
+            if _prev_monitor is not None:
+                try:
+                    await asyncio.wait_for(_prev_monitor, timeout=10)
+                except Exception:
+                    pass
+                _prev_monitor = None
+
             # Use buffered messages from monitor if available, otherwise poll
             if pending_messages:
                 replies = pending_messages
@@ -735,13 +746,17 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                         send_response_inline(token, chat_id, result)
                         _log("Response sent.")
 
-                    # Collect any messages the monitor saw before we stopped it
+                    # Collect any messages the monitor saw before we stopped it.
+                    # Don't block long — store ref so next iteration can ensure cleanup.
                     try:
-                        _, buffered = await asyncio.wait_for(monitor_task, timeout=15)
+                        _, buffered = await asyncio.wait_for(monitor_task, timeout=5)
                         if buffered:
                             pending_messages.extend(buffered)
-                    except (asyncio.TimeoutError, Exception):
-                        pass
+                        monitor_task = None
+                    except asyncio.TimeoutError:
+                        _prev_monitor = monitor_task  # Will be awaited at loop top
+                    except Exception:
+                        monitor_task = None
 
                 # Reset Working card to Done after agent turn completes
                 try:
