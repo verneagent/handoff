@@ -414,6 +414,24 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
         pass
 
     worker_url = handoff_config.load_worker_url(profile=resolved_profile)
+
+    # Drain any stale takeover flag left by a previous session.
+    # Without this, the first WS poll would immediately return takeover=True.
+    # Uses /replies/ GET (instant) instead of /poll/ (25s long-poll).
+    if worker_url:
+        try:
+            import urllib.request
+            api_key = handoff_config.load_api_key(resolved_profile)
+            req = urllib.request.Request(f"{worker_url}/replies/chat:{chat_id}")
+            if api_key:
+                req.add_header("Authorization", f"Bearer {api_key}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            if data.get("takeover"):
+                _log("Drained stale takeover flag")
+        except Exception:
+            pass
+
     session = handoff_db.get_session(session_id) or {}
     running = True
     start_time = time.time()
