@@ -471,6 +471,12 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     send_response_inline(token, chat_id, result)
                     _log("Response sent.")
 
+                # Reset Working card to Done after agent turn completes
+                try:
+                    handoff_lifecycle.reset_working_card(session_id)
+                except Exception:
+                    pass
+
             except Exception as e:
                 _log(f"Agent error: {e}")
                 try:
