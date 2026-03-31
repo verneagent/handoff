@@ -579,11 +579,23 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
                 extra_value={"approvers": approvers} if approvers else None,
             )
 
-            # If the existing card is too old (>60s), retire it to "Done ✓" and
-            # create a new one — the old card may be scrolled far up and invisible.
+            # Reuse the existing card if it's still the latest bot message
+            # (visible to user). If other messages were sent after it (card
+            # scrolled up), retire it to "Done ✓" and create a new one.
             _WORKING_CARD_MAX_AGE = 60
             if existing_msg_id:
-                if elapsed <= _WORKING_CARD_MAX_AGE:
+                # Check if the working card is still the latest by seeing if
+                # any newer messages exist in the DB since card creation
+                is_latest = True
+                if elapsed > _WORKING_CARD_MAX_AGE:
+                    try:
+                        latest = handoff_db.get_latest_sent_message(session_id)
+                        if latest and latest.get("message_id") != existing_msg_id:
+                            is_latest = False
+                    except Exception:
+                        is_latest = False
+
+                if is_latest:
                     try:
                         lark_im.update_card_message(token, existing_msg_id, card)
                         handoff_db.set_working_message(session_id, existing_msg_id)

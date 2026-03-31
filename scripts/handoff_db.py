@@ -899,6 +899,29 @@ def record_received_message(
         conn.close()
 
 
+def get_latest_sent_message(session_id):
+    """Return the most recent sent message for a session's chat_id."""
+    session = get_session(session_id)
+    if not session:
+        return None
+    chat_id = session.get("chat_id", "")
+    if not chat_id:
+        return None
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT message_id, text, title, sent_at FROM messages"
+            " WHERE chat_id = ? AND direction = 'sent'"
+            " ORDER BY sent_at DESC LIMIT 1",
+            (chat_id,),
+        ).fetchone()
+        if row:
+            return {"message_id": row[0], "text": row[1], "title": row[2], "sent_at": row[3]}
+        return None
+    finally:
+        conn.close()
+
+
 def is_bot_sent_message(message_id):
     """Check if a message_id was sent by the bot (exists in messages with direction='sent').
 
