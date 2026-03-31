@@ -25,14 +25,14 @@ Before following this protocol, identify your runtime:
 
 ### How it works
 
-The daemon passes you ONE message at a time. You process it and send a response. Do NOT enter the Main Loop or call wait scripts.
+The agent process passes you ONE message at a time. You process it and send a response. Do NOT enter the Main Loop or call wait scripts.
 
 1. You receive a user message as your prompt (text or JSON with image_key/parent_id)
 2. Process it: download images, resolve parent_id, do the work
 3. Send your response via `send_to_group.py`
-4. Stop. The daemon will call you again with the next message.
+4. Stop. The agent process will call you again with the next message.
 
-**Do NOT call `wait_for_reply.py`** — the daemon handles message reception.
+**Do NOT call `wait_for_reply.py`** — the agent process handles message reception.
 **Do NOT loop** — process ONE message per invocation.
 
 ### Agent management
@@ -43,7 +43,7 @@ When the user asks to start a new agent in a different directory, use:
 python3 scripts/handoff_ops.py agent-spawn --project-dir '<DIR>'
 ```
 
-This discovers or creates a Lark group for the target workspace and starts a new daemon agent process. The user can then interact with that agent in its Lark group.
+This discovers or creates a Lark group for the target workspace and starts a new agent process. The user can then interact with that agent in its Lark group.
 
 Other management commands:
 
@@ -56,9 +56,9 @@ python3 scripts/handoff_ops.py agent-log [--name X]     # View agent logs
 
 ### What you should NOT do
 
-- Call `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` (daemon handles waiting)
+- Call `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` (agent process handles waiting)
 - Enter the Main Loop or loop on your own
-- Run Steps A–E (daemon already did activation + start card)
+- Run Steps A–E (agent process already did activation + start card)
 - Manage sessions (activation, deactivation, tabs)
 - Call `end_and_cleanup.py`
 
@@ -164,8 +164,8 @@ This skill supports sub-commands via arguments:
 - **`/handoff profile show`** — Show the current profile name and config file path. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff profile set-default <name>`** — Set the default config profile. Writes to `~/.handoff/default_profile`. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff init profile:<profile>`** — Run the setup wizard for a named profile instead of the default. Creates `~/.handoff/profiles/<profile>.json`.
-- **`/handoff agent`** or **`/handoff agent list`** — List all installed daemon agents. Do NOT enter Handoff mode. macOS only. Safe to run anytime.
-- **`/handoff agent install`** — Interactive: select a group, choose project dir and model, install a new launchd daemon agent. Do NOT enter Handoff mode. **CLI only**. macOS only.
+- **`/handoff agent`** or **`/handoff agent list`** — List all installed agents. Do NOT enter Handoff mode. macOS only. Safe to run anytime.
+- **`/handoff agent install`** — Interactive: select a group, choose project dir and model, install a new launchd agent service. Do NOT enter Handoff mode. **CLI only**. macOS only.
 - **`/handoff agent status [name]`** — Show status and recent logs for an agent. If only one agent exists, name is optional. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff agent stop <name>`** — Stop a running agent. Do NOT enter Handoff mode. Safe to run anytime.
 - **`/handoff agent start <name>`** — Start a stopped agent. Do NOT enter Handoff mode. Safe to run anytime.
@@ -235,8 +235,8 @@ Print a formatted table of all supported sub-commands. Do NOT enter Handoff mode
 | `/handoff profile show` | Show current profile details |
 | `/handoff profile set-default <name>` | Set the default config profile |
 | `/handoff init profile:<profile>` | Run setup wizard for a named profile |
-| `/handoff agent` | List installed daemon agents (macOS) |
-| `/handoff agent install` | Install a new daemon agent for a chat group |
+| `/handoff agent` | List installed agents (macOS) |
+| `/handoff agent install` | Install a new agent for a chat group |
 | `/handoff agent status [name]` | Show agent status and recent logs |
 | `/handoff agent stop <name>` | Stop a running agent |
 | `/handoff agent start <name>` | Start a stopped agent |

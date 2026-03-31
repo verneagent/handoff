@@ -70,7 +70,7 @@ def main():
     session_id = hook_input.get("session_id", "")
     warn(f"hook fired: session_id={session_id!r}, keys={list(hook_input.keys())}")
 
-    # In agent mode, the daemon manages lifecycle (env vars, activation, cards).
+    # In agent mode, the agent process manages lifecycle (env vars, activation, cards).
     # Skip CLI-specific setup but let the hook run cleanly.
     if _is_agent_mode():
         warn("agent mode detected — skipping CLI-specific setup")

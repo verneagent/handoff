@@ -1720,7 +1720,7 @@ def _chat_id_type(value):
 
 
 # ---------------------------------------------------------------------------
-# Agent (daemon) management — macOS launchd only
+# Agent management — macOS launchd only
 # ---------------------------------------------------------------------------
 
 _AGENT_PLIST_PREFIX = "com.handoff.agent"
@@ -1992,7 +1992,7 @@ def cmd_agent_log(args):
 
 
 def cmd_agent_spawn(args):
-    """Spawn a temporary daemon agent (no launchd, background process).
+    """Spawn a temporary agent (no launchd, background process).
 
     Discovers or creates a group for the workspace, then runs handoff_agent.py
     as a nohup background process. Stops on handback.
@@ -2325,7 +2325,7 @@ def build_parser():
     s.add_argument("--message", required=True)
     s.set_defaults(func=cmd_relay)
 
-    # Agent (daemon) management
+    # Agent management
     s = sub.add_parser("agent-list")
     s.set_defaults(func=cmd_agent_list)
 

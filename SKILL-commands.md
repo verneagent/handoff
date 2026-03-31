@@ -235,7 +235,7 @@ The script auto-detects the install directory (resolves symlinks), downloads the
 
 ## Agent Management (`/handoff agent`)
 
-macOS only. Manages launchd daemon agents that run `handoff_agent.py` as background services. Each agent watches a Lark chat group and responds via Claude Agent SDK.
+macOS only. Manages launchd agents that run `handoff_agent.py` as background services. Each agent watches a Lark chat group and responds via Claude Agent SDK.
 
 ### List Agents (`/handoff agent` or `/handoff agent list`)
 

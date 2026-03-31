@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Handoff lifecycle: reusable start/end logic for CLI and daemon modes.
+"""Handoff lifecycle: reusable start/end logic for CLI and agent modes.
 
 Extracted from start_and_wait.py and end_and_cleanup.py so both the CLI
-handoff loop and the Agent SDK daemon can share the same lifecycle code.
+handoff loop and the Agent SDK agent process can share the same lifecycle code.
 """
 
 import os

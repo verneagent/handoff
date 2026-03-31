@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Handoff daemon: background agent using Claude Agent SDK.
+"""Handoff agent: background agent process using Claude Agent SDK.
 
-Architecture: daemon manages the message wait loop, Agent SDK processes
-each message via ClaudeSDKClient. The agent sends responses to Lark
-via send_to_group.py (same as CLI handoff). Daemon provides fallback
-if the agent doesn't send.
+Architecture: the agent process manages the message wait loop and passes
+each message to ClaudeSDKClient. The SDK client sends responses to Lark
+via send_to_group.py (same as CLI handoff). The agent process provides
+a fallback send if the SDK client doesn't.
 
 Usage:
     python3 scripts/handoff_agent.py --chat-id <CHAT_ID> --project-dir <DIR> [--model <MODEL>]
@@ -36,7 +36,7 @@ import wait_for_reply as wfr_mod
 
 def _log(msg):
     ts = time.strftime("%H:%M:%S")
-    print(f"[daemon] [{ts}] {msg}", flush=True)
+    print(f"[agent] [{ts}] {msg}", flush=True)
 
 
 def _diagnose_network():
@@ -152,6 +152,25 @@ def send_response_inline(token, chat_id, text):
         _log(f"send error: {e}")
 
 
+def _build_agent_append_prompt():
+    """Load the full SKILL.md and prepend agent-mode context."""
+    skill_md = ""
+    skill_path = os.path.join(SCRIPT_DIR, "..", "SKILL.md")
+    try:
+        with open(skill_path) as f:
+            skill_md = f.read()
+    except FileNotFoundError:
+        _log(f"Warning: SKILL.md not found at {skill_path}")
+
+    return (
+        "\n\n# Handoff Skill\n\n"
+        "You are running in **Agent mode** (`HANDOFF_SESSION_TOOL=Claude Agent SDK`). "
+        "Read the full skill document below — especially the **Agent Mode Overrides** "
+        "section — and follow its protocol.\n\n"
+        f"{skill_md}"
+    )
+
+
 def _build_agent_options(project_dir, model):
     """Build ClaudeAgentOptions."""
     from claude_agent_sdk import ClaudeAgentOptions
@@ -174,27 +193,7 @@ def _build_agent_options(project_dir, model):
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
-            "append": (
-                "\n\nYou are a Handoff agent powered by Claude Agent SDK, chatting with "
-                "a user via Lark (Feishu) group chat. You are NOT running in a terminal "
-                "or CLI — you are a background agent process.\n\n"
-                "## Message handling\n"
-                "Messages arrive as JSON with fields like text, image_key, file_key, "
-                "parent_id, msg_type. When a message has image_key, download each image "
-                "with `python3 scripts/handoff_ops.py download-image --image-key '<KEY>' "
-                "--message-id '<MSG_ID>'` then Read the file to see it before responding. "
-                "When a message has file_key, download with "
-                "`python3 scripts/handoff_ops.py download-file --file-key '<KEY>' "
-                "--message-id '<MSG_ID>' --file-name '<NAME>'` then Read it. "
-                "When a message has parent_id, resolve context with "
-                "`python3 scripts/handoff_ops.py parent-local --parent-id '<ID>'`.\n\n"
-                "## Responses\n"
-                "Send responses via `python3 scripts/send_to_group.py '<message>'`. "
-                "Use 2-space indentation in code blocks for mobile readability.\n\n"
-                "## Built-in commands (handled by daemon, not you)\n"
-                "These commands are intercepted before reaching you: handback, /clear, "
-                "/model <name>, /esc. Do not try to handle them yourself."
-            ),
+            "append": _build_agent_append_prompt(),
         },
         cwd=project_dir,
         model=model,
@@ -222,7 +221,7 @@ async def run_agent_turn(client, prompt):
 
 
 async def main_loop(chat_id, project_dir, model, profile=None):
-    """Main daemon loop."""
+    """Main agent loop."""
     import uuid
     session_id = str(uuid.uuid4())
     os.environ["HANDOFF_SESSION_ID"] = session_id
@@ -267,7 +266,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     _log(f"Activated session {session_id} for chat {chat_id}")
 
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
-    _log(f"Daemon started. Project: {project_dir}")
+    _log(f"Agent started. Project: {project_dir}")
 
     group_name = ""
     try:
@@ -352,7 +351,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if ("handback" in msg_lower or "hand back" in msg_lower
                     or msg_lower in ("退出", "停止", "结束", "stop", "quit", "exit")):
                 dissolve = "dissolve" in msg_lower
-                body = "Daemon stopped." if not dissolve else "Daemon stopped. Dissolving group..."
+                body = "Agent stopped." if not dissolve else "Agent stopped. Dissolving group..."
                 handoff_lifecycle.handoff_end(session_id, model, tool_name="Claude Agent SDK", body=body, silence=False)
                 if dissolve:
                     try:
@@ -509,12 +508,12 @@ async def main_loop(chat_id, project_dir, model, profile=None):
         handoff_lifecycle.deactivate(session_id)
     except Exception:
         pass
-    _log("Daemon stopped.")
+    _log("Agent stopped.")
     return 0
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Handoff daemon (Agent SDK)")
+    parser = argparse.ArgumentParser(description="Handoff agent (Agent SDK)")
     parser.add_argument("--chat-id", required=True, help="Lark chat ID")
     parser.add_argument("--project-dir", required=True, help="Project directory")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")

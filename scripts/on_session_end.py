@@ -35,7 +35,7 @@ def main():
         warn(f"invalid SessionEnd hook input JSON: {e}")
         hook_input = {}
 
-    # In agent mode, the daemon manages lifecycle (deactivation, cards).
+    # In agent mode, the agent process manages lifecycle (deactivation, cards).
     # Skip CLI-specific cleanup.
     if _is_agent_mode():
         warn("agent mode detected — skipping CLI-specific cleanup")
