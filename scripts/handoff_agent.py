@@ -281,7 +281,7 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
         try:
             result = handoff_worker.poll_worker_ws(
                 worker_url, chat_id, since, profile=profile,
-                max_duration=10,  # Short WS sessions so we can check stop_event
+                max_duration=30,  # Aligned with WS keepalive; checks stop_event between cycles
             )
             if result.get("takeover"):
                 buffered.append({"_takeover": True})
