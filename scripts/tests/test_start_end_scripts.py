@@ -104,6 +104,7 @@ class StartAndWaitTest(unittest.TestCase):
 class EndAndCleanupTest(unittest.TestCase):
     def setUp(self):
         self._orig_run_tool = end_and_cleanup.script_utils.run_tool
+        self._orig_reset_working = end_and_cleanup.handoff_lifecycle.reset_working_card
         self.run_calls = []
 
         def fake_run_tool(description, script, *args, **kwargs):  # type: ignore
@@ -114,9 +115,11 @@ class EndAndCleanupTest(unittest.TestCase):
             return subprocess.CompletedProcess([script], 0, stdout=stdout, stderr="")
 
         end_and_cleanup.script_utils.run_tool = fake_run_tool  # type: ignore
+        end_and_cleanup.handoff_lifecycle.reset_working_card = lambda sid: None  # type: ignore
 
     def tearDown(self):
         end_and_cleanup.script_utils.run_tool = self._orig_run_tool  # type: ignore
+        end_and_cleanup.handoff_lifecycle.reset_working_card = self._orig_reset_working  # type: ignore
 
     def _run(self, argv):
         old_argv = sys.argv
