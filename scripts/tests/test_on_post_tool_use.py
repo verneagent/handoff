@@ -954,6 +954,9 @@ class SkipPatternsTest(unittest.TestCase):
         # Check background task output path
         if "/tasks/" in command and ".output" in command:
             return True
+        # Check send-to-group descriptions
+        if "send" in desc_lower and ("to group" in desc_lower or "to lark" in desc_lower):
+            return True
         return False
 
     def test_skip_wait_for_reply(self):
@@ -987,6 +990,12 @@ class SkipPatternsTest(unittest.TestCase):
 
     def test_skip_skills_handoff_path(self):
         self.assertTrue(self._should_skip("python3 .claude/skills/handoff/scripts/foo.py"))
+
+    def test_skip_send_to_group_description(self):
+        self.assertTrue(self._should_skip("python3 foo.py 'hello'", "Send greeting response to group"))
+
+    def test_skip_send_to_lark_description(self):
+        self.assertTrue(self._should_skip("python3 foo.py 'hello'", "Send response to Lark"))
 
     def test_no_skip_normal_command(self):
         self.assertFalse(self._should_skip("git status", "Show working tree status"))

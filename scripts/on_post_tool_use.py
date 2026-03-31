@@ -661,6 +661,10 @@ def main():
         # (e.g. "sleep 600 && cat /private/tmp/claude-501/.../tasks/xxx.output")
         if "/tasks/" in command and ".output" in command:
             return
+        # Skip send-to-group commands by description (agent may use
+        # different paths than what's in SKIP_COMMANDS)
+        if "send" in desc_lower and ("to group" in desc_lower or "to lark" in desc_lower):
+            return
 
     # Agent Teams events always bypass message filter
     ALWAYS_FORWARD = {"TeamCreate", "SendMessage", "TeamDelete"}
