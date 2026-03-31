@@ -579,26 +579,37 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
                 extra_value={"approvers": approvers} if approvers else None,
             )
 
-            # Reuse the existing card if it's still the latest bot message
-            # (visible to user). If other messages were sent after it (card
-            # scrolled up), retire it to "Done ✓" and create a new one.
+            # Reuse the existing card or the latest "Done ✓" card if still
+            # visible. Only create a new card when the old one is scrolled up.
             _WORKING_CARD_MAX_AGE = 60
-            if existing_msg_id:
-                # Check if the working card is still the latest by seeing if
-                # any newer messages exist in the DB since card creation
+            reuse_msg_id = existing_msg_id
+
+            # If no active working card, check if the latest sent message
+            # is a "Done ✓" card we can reuse (avoids card proliferation).
+            if not reuse_msg_id:
+                try:
+                    latest = handoff_db.get_latest_sent_message(session_id)
+                    if latest and latest.get("title") == "Done ✓":
+                        reuse_msg_id = latest["message_id"]
+                        elapsed = 0  # Treat as fresh for reuse
+                except Exception:
+                    pass
+
+            if reuse_msg_id:
+                # Check if the card is still the latest (visible to user)
                 is_latest = True
                 if elapsed > _WORKING_CARD_MAX_AGE:
                     try:
                         latest = handoff_db.get_latest_sent_message(session_id)
-                        if latest and latest.get("message_id") != existing_msg_id:
+                        if latest and latest.get("message_id") != reuse_msg_id:
                             is_latest = False
                     except Exception:
                         is_latest = False
 
                 if is_latest:
                     try:
-                        lark_im.update_card_message(token, existing_msg_id, card)
-                        handoff_db.set_working_message(session_id, existing_msg_id)
+                        lark_im.update_card_message(token, reuse_msg_id, card)
+                        handoff_db.set_working_message(session_id, reuse_msg_id)
                         return
                     except Exception as e:
                         warn(f"failed to update working card: {e}")
@@ -606,7 +617,7 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
                     # Retire old card to "Done ✓" before creating a new one
                     try:
                         done_card = lark_im.build_card("Done ✓", body="", color="green")
-                        lark_im.update_card_message(token, existing_msg_id, done_card)
+                        lark_im.update_card_message(token, reuse_msg_id, done_card)
                     except Exception:
                         pass
                     handoff_db.clear_working_message(session_id)
