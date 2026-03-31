@@ -207,8 +207,11 @@ def _build_agent_options(project_dir, model):
     from claude_agent_sdk import ClaudeAgentOptions
 
     skill_dir = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+    # Start with essential system vars, then add handoff-specific ones
     handoff_env = {
         "PATH": f"/opt/homebrew/bin:/opt/homebrew/sbin:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HOME": os.environ.get("HOME", ""),
+        "USER": os.environ.get("USER", ""),
         "HANDOFF_SKILL_DIR": skill_dir,
     }
     # Forward session/proxy vars that hooks and scripts need
