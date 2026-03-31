@@ -549,8 +549,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 # Reset Working card to Done after agent turn completes
                 try:
                     handoff_lifecycle.reset_working_card(session_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log(f"reset_working_card error: {e}")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
