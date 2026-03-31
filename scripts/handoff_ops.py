@@ -2030,7 +2030,7 @@ def cmd_agent_spawn(args):
         )
         group_name = f"{worktree}@{machine}"
 
-    # Clean up stale sessions for this chat_id before spawning
+    # Clean up stale sessions and kick old agent's WS connection
     try:
         old_env = os.environ.get("HANDOFF_PROJECT_DIR")
         os.environ["HANDOFF_PROJECT_DIR"] = project_dir
@@ -2044,6 +2044,13 @@ def cmd_agent_spawn(args):
             del os.environ["HANDOFF_PROJECT_DIR"]
     except Exception:
         pass
+    # Send takeover signal so any old agent polling this chat exits
+    worker_url = handoff_config.load_worker_url(profile=profile)
+    if worker_url:
+        try:
+            handoff_worker.send_takeover(worker_url, chat_id, profile=profile)
+        except Exception:
+            pass
 
     # Spawn handoff_agent.py as background process
     script_dir = os.path.dirname(os.path.abspath(__file__))
