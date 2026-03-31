@@ -298,7 +298,8 @@ def clear_ack_reaction():
         token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
         lark_im.remove_reaction(token, data["message_id"], data["reaction_id"])
     except Exception as e:
-        warn(f"failed to clear thinking reaction: {e}")
+        if "HTTP Error" not in str(e):
+            warn(f"failed to clear thinking reaction: {e}")
 
 
 def handle_result(replies, worker_url, chat_id, session_id):
