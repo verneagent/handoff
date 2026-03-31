@@ -579,7 +579,10 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
                 extra_value={"approvers": approvers} if approvers else None,
             )
 
-            if existing_msg_id:
+            # If the existing card is too old (>60s), create a new one instead
+            # of updating — the old card may be scrolled far up and invisible.
+            _WORKING_CARD_MAX_AGE = 60
+            if existing_msg_id and elapsed <= _WORKING_CARD_MAX_AGE:
                 try:
                     lark_im.update_card_message(token, existing_msg_id, card)
                     handoff_db.set_working_message(session_id, existing_msg_id)
