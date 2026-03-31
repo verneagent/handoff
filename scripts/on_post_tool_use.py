@@ -579,16 +579,25 @@ def _send_or_update_working(session_id, session, tool_name, tool_input):
                 extra_value={"approvers": approvers} if approvers else None,
             )
 
-            # If the existing card is too old (>60s), create a new one instead
-            # of updating — the old card may be scrolled far up and invisible.
+            # If the existing card is too old (>60s), retire it to "Done ✓" and
+            # create a new one — the old card may be scrolled far up and invisible.
             _WORKING_CARD_MAX_AGE = 60
-            if existing_msg_id and elapsed <= _WORKING_CARD_MAX_AGE:
-                try:
-                    lark_im.update_card_message(token, existing_msg_id, card)
-                    handoff_db.set_working_message(session_id, existing_msg_id)
-                    return
-                except Exception as e:
-                    warn(f"failed to update working card: {e}")
+            if existing_msg_id:
+                if elapsed <= _WORKING_CARD_MAX_AGE:
+                    try:
+                        lark_im.update_card_message(token, existing_msg_id, card)
+                        handoff_db.set_working_message(session_id, existing_msg_id)
+                        return
+                    except Exception as e:
+                        warn(f"failed to update working card: {e}")
+                else:
+                    # Retire old card to "Done ✓" before creating a new one
+                    try:
+                        done_card = lark_im.build_card("Done ✓", body="", color="green")
+                        lark_im.update_card_message(token, existing_msg_id, done_card)
+                    except Exception:
+                        pass
+                    handoff_db.clear_working_message(session_id)
 
             try:
                 msg_id = lark_im.send_message(token, chat_id, card)
