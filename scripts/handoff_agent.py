@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -336,6 +337,15 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             if not user_message.strip():
                 continue
+
+            # Strip @-mention markers so commands like "@Bot /clear" work
+            if not has_media:
+                for r in replies:
+                    for m in (r.get("mentions") or []):
+                        key = m.get("key", "")
+                        if key:
+                            user_message = user_message.replace(key, "")
+                user_message = re.sub(r"\s+", " ", user_message).strip()
 
             # Check handback
             msg_lower = user_message.lower().strip()
