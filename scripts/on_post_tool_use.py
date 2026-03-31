@@ -666,6 +666,10 @@ def main():
             or "log" in desc_lower or "agent" in desc_lower
         ):
             return
+        # Skip commands referencing Claude's background task output directory
+        # (e.g. "sleep 600 && cat /private/tmp/claude-501/.../tasks/xxx.output")
+        if "/tasks/" in command and ".output" in command:
+            return
 
     # Agent Teams events always bypass message filter
     ALWAYS_FORWARD = {"TeamCreate", "SendMessage", "TeamDelete"}
