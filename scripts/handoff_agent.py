@@ -202,21 +202,22 @@ def _build_agent_options(project_dir, model):
 
 
 async def run_agent_turn(client, prompt):
-    """Send a prompt to the persistent SDK client. Returns result text."""
+    """Send a prompt to the persistent SDK client. Returns (result_text, cost)."""
     from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
 
     await client.query(prompt)
     result_text = None
+    cost = 0.0
     async for message in client.receive_response():
         if isinstance(message, ResultMessage):
             result_text = message.result
-            cost = getattr(message, "total_cost_usd", 0)
+            cost = getattr(message, "total_cost_usd", 0) or 0.0
             _log(f"Agent done. Cost: ${cost:.4f}")
         elif isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, TextBlock):
                     result_text = block.text
-    return result_text or "(no response)"
+    return result_text or "(no response)", cost
 
 
 async def main_loop(chat_id, project_dir, model, profile=None):
@@ -277,6 +278,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
     session = handoff_db.get_session(session_id) or {}
     running = True
+    start_time = time.time()
+    msg_count = 0
+    total_cost = 0.0
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -381,11 +385,75 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 send_response_inline(token, chat_id, "Operation cancelled. Ready for next message.")
                 continue
 
+            # Check /cd — change working directory
+            if msg_lower.startswith("/cd ") or msg_lower.startswith("cd "):
+                parts = user_message.strip().split(None, 1)
+                if len(parts) >= 2:
+                    new_dir = os.path.expanduser(parts[1].strip())
+                    if os.path.isdir(new_dir):
+                        project_dir = os.path.abspath(new_dir)
+                        os.environ["HANDOFF_PROJECT_DIR"] = project_dir
+                        state["options"] = _build_agent_options(project_dir, model)
+                        await _restart_client()
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, f"Working directory: **{project_dir}**\nSession cleared.")
+                    else:
+                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(token, chat_id, f"Directory not found: `{new_dir}`")
+                continue
+
+            # Check /ping
+            if msg_lower in ("/ping", "ping"):
+                uptime = int(time.time() - start_time)
+                h, m = divmod(uptime, 3600)
+                mins, secs = divmod(m, 60)
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id,
+                    f"🏓 Pong!\n"
+                    f"- Model: **{model}**\n"
+                    f"- Uptime: {h}h {mins}m {secs}s\n"
+                    f"- Messages: {msg_count}\n"
+                    f"- Cost: ${total_cost:.4f}\n"
+                    f"- CWD: `{project_dir}`")
+                continue
+
+            # Check /cost
+            if msg_lower in ("/cost", "cost", "/usage", "usage"):
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id,
+                    f"💰 Usage\n"
+                    f"- Total cost: **${total_cost:.4f}**\n"
+                    f"- Messages processed: {msg_count}\n"
+                    f"- Model: {model}")
+                continue
+
+            # Check /help
+            if msg_lower in ("/help", "help", "帮助"):
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id,
+                    "**Agent Commands**\n\n"
+                    "| Command | Description |\n"
+                    "|---|---|\n"
+                    "| `/model` | Show current model |\n"
+                    "| `/model <name>` | Switch model |\n"
+                    "| `/clear` | Reset conversation |\n"
+                    "| `/cd <dir>` | Change working directory |\n"
+                    "| `/esc` | Cancel current operation |\n"
+                    "| `/ping` | Status check |\n"
+                    "| `/cost` | Show API usage |\n"
+                    "| `/help` | This help |\n"
+                    "| `handback` | Stop agent |\n"
+                    "| `filter <level>` | Set message filter |\n"
+                    "| `autoapprove on/off` | Toggle auto-approve |")
+                continue
+
             _log(f"Processing: {user_message[:80]}")
+            msg_count += 1
 
             # Run Agent SDK — agent sends via send_to_group.py (env vars passed)
             try:
-                result = await run_agent_turn(client, user_message)
+                result, turn_cost = await run_agent_turn(client, user_message)
+                total_cost += turn_cost
                 _log(f"Agent turn done. Result length: {len(result)}")
 
                 # Always send agent's output as fallback.
