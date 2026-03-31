@@ -656,9 +656,15 @@ def main():
         for skip in SKIP_COMMANDS:
             if skip in combined:
                 return
-        # Skip reply-polling commands (Claude uses various descriptions
-        # like "Check for reply", "Check reply after 5 min", etc.)
-        if "reply" in description.lower() and ("check" in description.lower() or "poll" in description.lower() or "wait" in description.lower()):
+        # Skip polling/monitoring commands from the handoff loop.
+        # Claude uses various descriptions like "Check for reply",
+        # "Check reply after 5 min", "Check latest line", etc.
+        desc_lower = description.lower()
+        if desc_lower and ("check" in desc_lower or "poll" in desc_lower) and (
+            "reply" in desc_lower or "latest" in desc_lower
+            or "output" in desc_lower or "status" in desc_lower
+            or "log" in desc_lower or "agent" in desc_lower
+        ):
             return
 
     # Agent Teams events always bypass message filter
