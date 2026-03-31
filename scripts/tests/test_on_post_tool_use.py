@@ -929,5 +929,71 @@ class BashDiffDetectionTest(unittest.TestCase):
         self.assertNotIn("```", body)  # Colors → no code block
 
 
+# ---------------------------------------------------------------------------
+# Working card skip patterns
+# ---------------------------------------------------------------------------
+
+
+class SkipPatternsTest(unittest.TestCase):
+    """Test that infrastructure commands are properly skipped."""
+
+    def _should_skip(self, command, description=""):
+        """Check if a Bash command would be skipped by the main handler."""
+        combined = f"{command} {description}"
+        for skip in on_post_tool_use.SKIP_COMMANDS:
+            if skip in combined:
+                return True
+        # Check polling description patterns
+        desc_lower = description.lower()
+        if desc_lower and ("check" in desc_lower or "poll" in desc_lower) and (
+            "reply" in desc_lower or "latest" in desc_lower
+            or "output" in desc_lower or "status" in desc_lower
+            or "log" in desc_lower or "agent" in desc_lower
+        ):
+            return True
+        # Check background task output path
+        if "/tasks/" in command and ".output" in command:
+            return True
+        return False
+
+    def test_skip_wait_for_reply(self):
+        self.assertTrue(self._should_skip("python3 scripts/wait_for_reply.py"))
+
+    def test_skip_send_and_wait(self):
+        self.assertTrue(self._should_skip("python3 scripts/send_and_wait.py 'hello'"))
+
+    def test_skip_handoff_ops(self):
+        self.assertTrue(self._should_skip("python3 scripts/handoff_ops.py download-image"))
+
+    def test_skip_check_for_reply_description(self):
+        self.assertTrue(self._should_skip("tail -3 /tmp/output", "Check for reply"))
+
+    def test_skip_check_reply_after_5_min(self):
+        self.assertTrue(self._should_skip("tail -3 /tmp/output", "Check reply after 5 min"))
+
+    def test_skip_check_latest_line(self):
+        self.assertTrue(self._should_skip("tail -3 /tmp/output", "Check latest line"))
+
+    def test_skip_poll_for_reply(self):
+        self.assertTrue(self._should_skip("tail -3 /tmp/output", "Poll for reply"))
+
+    def test_skip_check_agent_status(self):
+        self.assertTrue(self._should_skip("tail -3 /tmp/output", "Check agent status"))
+
+    def test_skip_background_task_output(self):
+        self.assertTrue(self._should_skip(
+            "sleep 600 && cat /private/tmp/claude-501/tasks/abc123.output"
+        ))
+
+    def test_skip_skills_handoff_path(self):
+        self.assertTrue(self._should_skip("python3 .claude/skills/handoff/scripts/foo.py"))
+
+    def test_no_skip_normal_command(self):
+        self.assertFalse(self._should_skip("git status", "Show working tree status"))
+
+    def test_no_skip_normal_bash(self):
+        self.assertFalse(self._should_skip("ls -la", "List files"))
+
+
 if __name__ == "__main__":
     unittest.main()
