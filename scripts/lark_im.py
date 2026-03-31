@@ -93,7 +93,7 @@ def resolve_session_context():
         "token": token,
         "session_id": session_id,
         "chat_id": chat_id,
-        "session": session or {"chat_id": chat_id, "sidecar_mode": False},
+        "session": session,
     }
 
 

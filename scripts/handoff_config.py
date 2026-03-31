@@ -156,31 +156,24 @@ def _require_project_dir():
 
 
 def resolve_chat_id(session_id=None):
-    """Resolve chat_id from session or HANDOFF_CHAT_ID env var.
+    """Resolve chat_id from the active handoff session.
 
-    In agent mode, the SDK's claude process has a different session_id
-    than the agent process, so session lookup may fail. HANDOFF_CHAT_ID
-    provides a direct fallback.
-
-    Returns (chat_id, session_or_None, profile).
-    Raises RuntimeError if neither source provides a chat_id.
+    Returns (chat_id, session, profile).
+    Raises RuntimeError if no session is found.
     """
     import handoff_db
 
     sid = session_id or os.environ.get("HANDOFF_SESSION_ID", "")
     session = handoff_db.resolve_session(sid) if sid else None
-    direct_chat_id = os.environ.get("HANDOFF_CHAT_ID", "").strip()
 
-    if not session and not direct_chat_id:
-        raise RuntimeError(f"No active session for {sid} and HANDOFF_CHAT_ID not set")
+    if not session:
+        raise RuntimeError(f"No active session for {sid}")
 
-    chat_id = (session.get("chat_id") if session else None) or direct_chat_id
+    chat_id = session.get("chat_id", "")
     if not chat_id:
-        raise RuntimeError("Could not resolve chat_id")
+        raise RuntimeError(f"Session {sid} has no chat_id")
 
-    profile = (session.get("config_profile", "default") if session
-               else os.environ.get("HANDOFF_CONFIG_PROFILE", "default"))
-
+    profile = session.get("config_profile", "default")
     return chat_id, session, profile
 
 
