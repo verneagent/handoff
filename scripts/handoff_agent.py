@@ -239,6 +239,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     except Exception:
         pass
 
+    # Clean up any stale session for this chat_id before activating
+    try:
+        existing = handoff_db.get_active_sessions()
+        for s in existing:
+            if s.get("chat_id") == chat_id:
+                _log(f"Cleaning stale session {s['session_id']} for chat {chat_id}")
+                handoff_db.deactivate_handoff(s["session_id"])
+    except Exception as e:
+        _log(f"Stale session cleanup error: {e}")
+
     handoff_lifecycle.activate(
         session_id, chat_id, model,
         operator_open_id=operator_open_id,
