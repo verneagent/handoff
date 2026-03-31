@@ -256,7 +256,7 @@ async def run_agent_turn(client, prompt):
     return result_text or "(no response)", cost
 
 
-async def main_loop(chat_id, project_dir, model, profile=None):
+async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
     """Main agent loop."""
     import uuid
     session_id = str(uuid.uuid4())
@@ -276,13 +276,18 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     _log("Token acquired successfully")
 
     operator_open_id = ""
+    bot_open_id = ""
     try:
         email = credentials.get("email", "")
         if email:
             operator_open_id = lark_im.lookup_open_id_by_email(token, email) or ""
             _log(f"Operator: {email} -> {operator_open_id[:16]}...")
+        bot_info = lark_im.get_bot_info(token)
+        bot_open_id = bot_info.get("open_id", "")
+        if bot_open_id:
+            _log(f"Bot: {bot_open_id[:16]}...")
     except Exception as e:
-        _log(f"Operator lookup failed: {e}")
+        _log(f"Operator/bot lookup failed: {e}")
 
     # Clean up any session holding this chat_id before activating
     try:
@@ -296,9 +301,12 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     handoff_lifecycle.activate(
         session_id, chat_id, model,
         operator_open_id=operator_open_id,
+        bot_open_id=bot_open_id,
+        sidecar_mode=sidecar,
         config_profile=resolved_profile,
     )
-    _log(f"Activated session {session_id} for chat {chat_id}")
+    _log(f"Activated session {session_id} for chat {chat_id}"
+         + (f" (sidecar)" if sidecar else ""))
 
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
     _log(f"Agent started. Project: {project_dir}")
@@ -579,6 +587,7 @@ def main():
     parser.add_argument("--project-dir", required=True, help="Project directory")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")
     parser.add_argument("--profile", default=None, help="Config profile name")
+    parser.add_argument("--sidecar", action="store_true", help="Enable sidecar mode")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -586,7 +595,8 @@ def main():
         print(f"Error: {project_dir} is not a directory", file=sys.stderr)
         return 1
 
-    return asyncio.run(main_loop(args.chat_id, project_dir, args.model, args.profile))
+    return asyncio.run(main_loop(args.chat_id, project_dir, args.model, args.profile,
+                                 sidecar=args.sidecar))
 
 
 if __name__ == "__main__":

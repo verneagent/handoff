@@ -2086,6 +2086,8 @@ def cmd_agent_spawn(args):
     ]
     if profile != "default":
         cmd += ["--profile", profile]
+    if getattr(args, "sidecar", False):
+        cmd += ["--sidecar"]
 
     with open(log_path, "a") as log_f:
         proc = subprocess.Popen(
@@ -2352,6 +2354,7 @@ def build_parser():
     s = sub.add_parser("agent-spawn")
     s.add_argument("--project-dir", default=None)
     s.add_argument("--model", default="claude-opus-4-6")
+    s.add_argument("--sidecar", action="store_true")
     s.set_defaults(func=cmd_agent_spawn)
 
     return p
