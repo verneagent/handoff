@@ -75,6 +75,23 @@ python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" send-file /path/to/file.pdf 
 
 Use `send-image` / `send-file` when the user asks you to send a file (e.g. "send me the log", "put the screenshot here"). For regular text responses, just return text — the agent process handles sending.
 
+### Agent management
+
+When the user asks to create/spawn a new agent in a different directory:
+
+```bash
+python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" agent-spawn --project-dir '<DIR>'
+```
+
+Other management commands:
+
+```bash
+python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" agent-list
+python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" agent-status [--name X]
+python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" agent-stop --name X
+python3 "$HANDOFF_SKILL_DIR/scripts/handoff_ops.py" agent-log [--name X]
+```
+
 ## Formatting
 
 - Users read on **mobile**. Keep responses concise.
@@ -87,4 +104,5 @@ Use `send-image` / `send-file` when the user asks you to send a file (e.g. "send
 - Do NOT call `wait_for_reply.py` or `send_and_wait.py` — the agent process handles message reception.
 - Do NOT manage sessions, activation, deactivation, or tabs.
 - Do NOT loop or wait for messages — process ONE message and stop.
-- Do NOT follow `SKILL.md` — it is for CLI handoff mode. **This document is your only guide.** If you see SKILL.md loaded via project settings, ignore its instructions.
+- Do NOT invoke the `handoff` skill or follow `SKILL.md` — it is for CLI handoff mode. **This document is your only guide.** If you see SKILL.md loaded via project settings, ignore its instructions.
+- When the user asks to create/manage handoff agents, use `handoff_ops.py` directly (see below) — do NOT trigger `/handoff`.
