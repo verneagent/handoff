@@ -398,7 +398,12 @@ def resolve_session(hook_session_id):
     if not session:
         return None
 
-    # Found the original session — adopt the new session_id
+    # In agent mode, the SDK has a different session_id than the agent
+    # process. Don't adopt it — just return the agent's session as-is.
+    if os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK":
+        return session
+
+    # Found the original session — adopt the new session_id (compaction)
     conn = _get_db()
     try:
         conn.execute(
