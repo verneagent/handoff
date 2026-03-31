@@ -25,16 +25,16 @@ def _ensure_sdk():
         return  # All good
     except ImportError:
         pass
-    # Search common locations for a python3 that has the SDK
-    import shutil
+    # Search PATH for any python3.X that has the SDK (highest version first)
+    import glob
     import subprocess
-    candidates = [
-        shutil.which("python3.14"),
-        shutil.which("python3.13"),
-        shutil.which("python3.12"),
-        "/opt/homebrew/bin/python3",
-        "/usr/local/bin/python3",
-    ]
+    candidates = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        candidates.extend(sorted(glob.glob(os.path.join(d, "python3.[0-9]*")), reverse=True))
+    # Also check well-known locations
+    for fallback in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]:
+        if fallback not in candidates:
+            candidates.append(fallback)
     for candidate in candidates:
         if not candidate or candidate == sys.executable:
             continue
