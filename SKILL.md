@@ -21,46 +21,23 @@ Before following this protocol, identify your runtime:
 
 ## Agent Mode Overrides
 
-> **Agent mode only.** When `HANDOFF_SESSION_TOOL=Claude Agent SDK` is set, you are running inside a `handoff_agent.py` agent process. The agent has already activated the session and sent the start card. You run the Main Loop directly.
+> **Agent mode only.** When `HANDOFF_SESSION_TOOL=Claude Agent SDK` is set, you are running inside a `handoff_agent.py` agent process.
 
-### How it works
+In Agent mode, the SDK client is a **Lark-aware coding engine**. It handles user requests and returns text responses. The agent process (`handoff_agent.py`) owns all message I/O — receiving from Lark and sending to Lark.
 
-The agent process passes you ONE message at a time. You process it and send a response. Do NOT enter the Main Loop or call wait scripts.
+The SDK client's behavior is defined by **`SKILL-agent.md`**, not this document. This document (SKILL.md) is for CLI and OpenCode handoff only.
 
-1. You receive a user message as your prompt (text or JSON with image_key/parent_id)
-2. Process it: download images, resolve parent_id, do the work
-3. Send your response via `send_to_group.py`
-4. Stop. The agent process will call you again with the next message.
+### Architecture
 
-**Do NOT call `wait_for_reply.py`** — the agent process handles message reception.
-**Do NOT loop** — process ONE message per invocation.
+- **Agent process**: session lifecycle, message reception, command dispatch (/clear, /model, etc.), sending responses to Lark
+- **SDK client**: coding tasks, file operations, Lark media I/O (download-image, send-image, send-file, parent-local via `handoff_ops.py`)
 
-### Agent management
+### What the SDK client does NOT do
 
-When the user asks to start a new agent in a different directory, use:
-
-```bash
-python3 scripts/handoff_ops.py agent-spawn --project-dir '<DIR>'
-```
-
-This discovers or creates a Lark group for the target workspace and starts a new agent process. The user can then interact with that agent in its Lark group.
-
-Other management commands:
-
-```bash
-python3 scripts/handoff_ops.py agent-list              # List installed agents
-python3 scripts/handoff_ops.py agent-status [--name X]  # Show agent status
-python3 scripts/handoff_ops.py agent-stop --name X      # Stop an agent
-python3 scripts/handoff_ops.py agent-log [--name X]     # View agent logs
-```
-
-### What you should NOT do
-
-- Call `wait_for_reply.py`, `send_and_wait.py`, or `start_and_wait.py` (agent process handles waiting)
-- Enter the Main Loop or loop on your own
-- Run Steps A–E (agent process already did activation + start card)
-- Manage sessions (activation, deactivation, tabs)
-- Call `end_and_cleanup.py`
+- Call `send_to_group.py` (agent process sends its text result)
+- Call `wait_for_reply.py` or `send_and_wait.py`
+- Manage sessions, activation, deactivation, or tabs
+- Follow this SKILL.md document
 
 ## OpenCode Overrides
 

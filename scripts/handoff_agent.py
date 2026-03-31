@@ -192,32 +192,26 @@ def send_response_inline(token, chat_id, text):
 
 
 def _build_agent_append_prompt():
-    """Load the full SKILL.md and prepend agent-mode context."""
-    skill_md = ""
-    skill_path = os.path.join(SCRIPT_DIR, "..", "SKILL.md")
+    """Load SKILL-agent.md — the concise Lark I/O guide for the SDK client."""
+    skill_agent_path = os.path.join(SCRIPT_DIR, "..", "SKILL-agent.md")
     try:
-        with open(skill_path) as f:
-            skill_md = f.read()
+        with open(skill_agent_path) as f:
+            return "\n\n" + f.read()
     except FileNotFoundError:
-        _log(f"Warning: SKILL.md not found at {skill_path}")
-
-    return (
-        "\n\n# Handoff Skill\n\n"
-        "You are running in **Agent mode** (`HANDOFF_SESSION_TOOL=Claude Agent SDK`). "
-        "Read the full skill document below — especially the **Agent Mode Overrides** "
-        "section — and follow its protocol.\n\n"
-        f"{skill_md}"
-    )
+        _log(f"Warning: SKILL-agent.md not found at {skill_agent_path}")
+        return ""
 
 
 def _build_agent_options(project_dir, model):
     """Build ClaudeAgentOptions."""
     from claude_agent_sdk import ClaudeAgentOptions
 
-    # Pass handoff env vars + correct PATH for Bash tool
+    skill_dir = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
     handoff_env = {
         "PATH": f"/opt/homebrew/bin:/opt/homebrew/sbin:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HANDOFF_SKILL_DIR": skill_dir,
     }
+    # Forward session/proxy vars that hooks and scripts need
     for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
                 "HANDOFF_TMP_DIR", "http_proxy", "https_proxy", "all_proxy",
                 "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
@@ -228,7 +222,7 @@ def _build_agent_options(project_dir, model):
     return ClaudeAgentOptions(
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
-        permission_mode="bypassPermissions",
+        permission_mode="default",
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
@@ -502,24 +496,48 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     "| `autoapprove on/off` | Toggle auto-approve |")
                 continue
 
+            # Check autoapprove
+            if re.match(r"(auto\s*approve|autoapprove)\s+(on|off)", msg_lower):
+                enabled = "on" in msg_lower.split()[-1]
+                try:
+                    handoff_db.set_autoapprove(chat_id, enabled)
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id,
+                        f"Auto-approve **{'enabled' if enabled else 'disabled'}**.")
+                except Exception as e:
+                    _log(f"autoapprove error: {e}")
+                continue
+
+            # Check filter
+            if re.match(r"filter\s+(verbose|important|concise)", msg_lower):
+                level = msg_lower.split()[-1]
+                try:
+                    import subprocess
+                    subprocess.run(
+                        [sys.executable, os.path.join(SCRIPT_DIR, "handoff_ops.py"),
+                         "set-filter", level],
+                        check=True, capture_output=True,
+                    )
+                    token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    send_response_inline(token, chat_id, f"Message filter set to **{level}**.")
+                except Exception as e:
+                    _log(f"filter error: {e}")
+                continue
+
             _log(f"Processing: {user_message[:80]}")
             msg_count += 1
 
-            # Run Agent SDK — agent sends via send_to_group.py per SKILL.md protocol
-            turn_start_ms = int(time.time() * 1000)
+            # Run Agent SDK — SDK returns text, we send it to Lark
             try:
                 result, turn_cost = await run_agent_turn(client, user_message)
                 total_cost += turn_cost
                 _log(f"Agent turn done. Result length: {len(result)}")
 
-                # If the agent didn't send via send_to_group.py, send as fallback
-                agent_sent = handoff_db.count_sent_messages(chat_id, turn_start_ms)
-                if agent_sent > 0:
-                    _log(f"Agent sent {agent_sent} message(s).")
-                elif result and result.strip():
+                # Agent process owns sending — SDK never calls send_to_group.py
+                if result and result.strip():
                     token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                     send_response_inline(token, chat_id, result)
-                    _log("Fallback send (agent didn't call send_to_group.py).")
+                    _log("Response sent.")
 
                 # Reset Working card to Done after agent turn completes
                 try:
