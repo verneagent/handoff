@@ -202,7 +202,7 @@ def _build_agent_append_prompt():
         return ""
 
 
-def _build_agent_options(project_dir, model):
+def _build_agent_options(project_dir, model, chat_id=""):
     """Build ClaudeAgentOptions."""
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -213,6 +213,7 @@ def _build_agent_options(project_dir, model):
         "HOME": os.environ.get("HOME", ""),
         "USER": os.environ.get("USER", ""),
         "HANDOFF_SKILL_DIR": skill_dir,
+        "HANDOFF_CHAT_ID": chat_id,
     }
     # Forward session/proxy vars that hooks and scripts need
     for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
@@ -328,7 +329,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
     # Persistent ClaudeSDKClient — session stays alive across turns
     from claude_agent_sdk import ClaudeSDKClient
-    state = {"options": _build_agent_options(project_dir, model)}
+    state = {"options": _build_agent_options(project_dir, model, chat_id)}
     client = ClaudeSDKClient(options=state["options"])
     await client.__aenter__()
     _log("Agent SDK client initialized")
@@ -415,7 +416,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     new_model = parts[1].strip()
                     old_model = model
                     model = new_model
-                    state["options"] = _build_agent_options(project_dir, model)
+                    state["options"] = _build_agent_options(project_dir, model, chat_id)
                     await _restart_client()
                     # Update tabs to reflect new model name
                     try:
@@ -445,7 +446,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     if os.path.isdir(new_dir):
                         project_dir = os.path.abspath(new_dir)
                         os.environ["HANDOFF_PROJECT_DIR"] = project_dir
-                        state["options"] = _build_agent_options(project_dir, model)
+                        state["options"] = _build_agent_options(project_dir, model, chat_id)
                         await _restart_client()
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(token, chat_id, f"Working directory: **{project_dir}**\nSession cleared.")
