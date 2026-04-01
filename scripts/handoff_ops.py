@@ -2030,8 +2030,8 @@ def cmd_agent_spawn(args):
         )
         group_name = f"{worktree}@{machine}"
 
-    # Clean up stale sessions and kick old agent's WS connection
-    had_stale = False
+    # Clean up stale DB sessions. Takeover signal is sent by
+    # handoff_agent.py's main_loop to avoid race conditions.
     try:
         old_env = os.environ.get("HANDOFF_PROJECT_DIR")
         os.environ["HANDOFF_PROJECT_DIR"] = project_dir
@@ -2039,21 +2039,12 @@ def cmd_agent_spawn(args):
         for s in stale:
             if s.get("chat_id") == chat_id:
                 handoff_db.unregister_session(s["session_id"])
-                had_stale = True
         if old_env:
             os.environ["HANDOFF_PROJECT_DIR"] = old_env
         elif "HANDOFF_PROJECT_DIR" in os.environ:
             del os.environ["HANDOFF_PROJECT_DIR"]
     except Exception:
         pass
-    # Only send takeover if there was actually a stale session to replace
-    if had_stale:
-        worker_url = handoff_config.load_worker_url(profile=profile)
-        if worker_url:
-            try:
-                handoff_worker.send_takeover(worker_url, chat_id, profile=profile)
-            except Exception:
-                pass
 
     # Spawn handoff_agent.py as background process
     script_dir = os.path.dirname(os.path.abspath(__file__))

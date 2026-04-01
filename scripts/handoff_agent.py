@@ -380,14 +380,29 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
     except Exception as e:
         _log(f"Operator/bot lookup failed: {e}")
 
-    # Clean up any session holding this chat_id before activating
+    # Clean up any session holding this chat_id before activating.
+    # Send takeover HERE (same process) so we can reliably drain it.
+    worker_url = handoff_config.load_worker_url(profile=resolved_profile)
+    had_stale = False
     try:
         owner = handoff_db.get_chat_owner_session(chat_id)
         if owner:
             _log(f"Cleaning stale session {owner} for chat {chat_id}")
             handoff_db.deactivate_handoff(owner)
+            had_stale = True
     except Exception as e:
         _log(f"Stale session cleanup error: {e}")
+
+    # Send takeover + drain in same process to avoid race conditions.
+    # The old agent's WS will receive takeover and exit; we wait and
+    # then drain any residual flag before opening our own WS.
+    if had_stale and worker_url:
+        try:
+            handoff_worker.send_takeover(worker_url, chat_id, profile=resolved_profile)
+            _log("Sent takeover signal")
+            time.sleep(2)  # Wait for CF Workers to propagate
+        except Exception as e:
+            _log(f"send_takeover error: {e}")
 
     handoff_lifecycle.activate(
         session_id, chat_id, model,
@@ -410,28 +425,20 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
     except Exception:
         pass
 
-    worker_url = handoff_config.load_worker_url(profile=resolved_profile)
-
-    # Drain any stale takeover flag left by a previous session or our own spawn.
-    # Without this, the first WS poll would immediately return takeover=True.
-    # Retry a few times because the spawn's own takeover signal may still be
-    # propagating through CF Workers when we first check.
+    # Drain any residual takeover flag before entering the WS poll loop.
     if worker_url:
         import urllib.request
         api_key = handoff_config.load_api_key(resolved_profile)
-        for _drain_attempt in range(3):
-            try:
-                req = urllib.request.Request(f"{worker_url}/replies/chat:{chat_id}")
-                if api_key:
-                    req.add_header("Authorization", f"Bearer {api_key}")
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read())
-                if data.get("takeover"):
-                    _log("Drained stale takeover flag")
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
+        try:
+            req = urllib.request.Request(f"{worker_url}/replies/chat:{chat_id}")
+            if api_key:
+                req.add_header("Authorization", f"Bearer {api_key}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            if data.get("takeover"):
+                _log("Drained residual takeover flag")
+        except Exception:
+            pass
 
     session = handoff_db.get_session(session_id) or {}
     running = True
