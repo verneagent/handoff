@@ -74,6 +74,7 @@ def send_end_card(session_id, model, tool_name="Claude Agent SDK", body=""):
 def reset_working_card(session_id):
     """Update the 'Working...' card to 'Done ✓' and clear state/stop flag."""
     import fcntl
+    import sys
 
     tmp_dir = os.environ.get("HANDOFF_TMP_DIR", "/tmp/handoff")
     os.makedirs(tmp_dir, exist_ok=True)
@@ -83,6 +84,8 @@ def reset_working_card(session_id):
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
             msg_id = handoff_db.get_working_message(session_id)
+            if not msg_id:
+                print(f"[handoff] reset_working_card: no working message for {session_id[:8]}", file=sys.stderr)
             if msg_id:
                 try:
                     session = handoff_db.get_session(session_id)
@@ -98,8 +101,11 @@ def reset_working_card(session_id):
                             body = f"Completed in {mins}m {secs}s"
                         done_card = lark_im.build_card("Done ✓", body=body, color="green")
                         lark_im.update_card_message(token, msg_id, done_card)
-                except Exception:
-                    pass
+                        print(f"[handoff] reset_working_card: updated {msg_id} to Done ({body})", file=sys.stderr)
+                    else:
+                        print(f"[handoff] reset_working_card: no token for {session_id[:8]}", file=sys.stderr)
+                except Exception as e:
+                    print(f"[handoff] reset_working_card error: {e}", file=sys.stderr)
             handoff_db.clear_working_message(session_id)
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
