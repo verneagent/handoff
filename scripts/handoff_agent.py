@@ -412,22 +412,26 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
 
     worker_url = handoff_config.load_worker_url(profile=resolved_profile)
 
-    # Drain any stale takeover flag left by a previous session.
+    # Drain any stale takeover flag left by a previous session or our own spawn.
     # Without this, the first WS poll would immediately return takeover=True.
-    # Uses /replies/ GET (instant) instead of /poll/ (25s long-poll).
+    # Retry a few times because the spawn's own takeover signal may still be
+    # propagating through CF Workers when we first check.
     if worker_url:
-        try:
-            import urllib.request
-            api_key = handoff_config.load_api_key(resolved_profile)
-            req = urllib.request.Request(f"{worker_url}/replies/chat:{chat_id}")
-            if api_key:
-                req.add_header("Authorization", f"Bearer {api_key}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read())
-            if data.get("takeover"):
-                _log("Drained stale takeover flag")
-        except Exception:
-            pass
+        import urllib.request
+        api_key = handoff_config.load_api_key(resolved_profile)
+        for _drain_attempt in range(3):
+            try:
+                req = urllib.request.Request(f"{worker_url}/replies/chat:{chat_id}")
+                if api_key:
+                    req.add_header("Authorization", f"Bearer {api_key}")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                if data.get("takeover"):
+                    _log("Drained stale takeover flag")
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
 
     session = handoff_db.get_session(session_id) or {}
     running = True
