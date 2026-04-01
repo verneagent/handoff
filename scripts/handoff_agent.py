@@ -142,6 +142,12 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
         try:
             result = handoff_worker.poll_worker_ws(worker_url, chat_id, since, profile=profile)
             if result.get("takeover"):
+                # Verify our session is still active — if we sent the takeover
+                # ourselves (to kick a stale session), ignore it.
+                sid = session.get("session_id", "")
+                if sid and handoff_db.get_session(sid):
+                    _log("Ignoring takeover (own session still active)")
+                    continue
                 return {"takeover": True}
             replies = result.get("replies", [])
             if replies:
@@ -161,6 +167,10 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
         try:
             result = handoff_worker.poll_worker(worker_url, chat_id, since, profile=profile)
             if result.get("takeover"):
+                sid = session.get("session_id", "")
+                if sid and handoff_db.get_session(sid):
+                    _log("Ignoring takeover (own session still active)")
+                    continue
                 return {"takeover": True}
             if result.get("error"):
                 time.sleep(3)
