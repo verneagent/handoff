@@ -238,11 +238,12 @@ def _build_agent_options(project_dir, model):
 
 
 async def run_agent_turn(client, prompt):
-    """Send a prompt to the persistent SDK client. Returns (result_text, cost, interrupted)."""
+    """Send a prompt to the persistent SDK client. Returns (result_text, cost)."""
     from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
 
     await client.query(prompt)
     result_text = None
+    last_assistant_text = None
     cost = 0.0
     async for message in client.receive_response():
         if isinstance(message, ResultMessage):
@@ -253,8 +254,9 @@ async def run_agent_turn(client, prompt):
         elif isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, TextBlock):
-                    result_text = block.text
-    return result_text or "(no response)", cost
+                    last_assistant_text = block.text
+    # Prefer ResultMessage.result (the final summary); fall back to last TextBlock
+    return (result_text or last_assistant_text or "(no response)"), cost
 
 
 def _is_esc_command(text, mentions=None):
