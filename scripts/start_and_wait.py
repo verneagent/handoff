@@ -14,7 +14,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
 import script_utils
-import lark_im
 
 
 def _restore_profile():
@@ -52,18 +51,6 @@ def main() -> int:
         help="Override wait_for_reply backoff interval",
     )
     args = parser.parse_args()
-
-    # Detect sidecar mode from session table
-    try:
-        ctx = lark_im.resolve_session_context()
-        sidecar_mode = ctx.get("session", {}).get("sidecar_mode", False)
-    except Exception:
-        sidecar_mode = False
-
-    # In sidecar mode, skip tabs and status card (external group, no modifications)
-    if sidecar_mode:
-        args.skip_tabs = True
-        args.skip_card = True
 
     restore_needed = False
     try:

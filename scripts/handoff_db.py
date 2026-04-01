@@ -163,7 +163,7 @@ def _normalize_session_tool():
 
 
 def try_claim_chat(session_id, chat_id, session_model,
-                   operator_open_id="", bot_open_id="", sidecar_mode=False,
+                   operator_open_id="", bot_open_id="", need_mention=False,
                    config_profile="default"):
     """Atomically claim a chat for a session.
 
@@ -192,7 +192,7 @@ def try_claim_chat(session_id, chat_id, session_model,
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, chat_id, tool, session_model, int(time.time()),
              operator_open_id or "", bot_open_id or "",
-             1 if sidecar_mode else 0, "[]", config_profile or "default"),
+             1 if need_mention else 0, "[]", config_profile or "default"),
         )
         conn.execute("COMMIT")
         return True, session_id
@@ -214,7 +214,7 @@ def try_claim_chat(session_id, chat_id, session_model,
 
 
 def register_session(session_id, chat_id, session_model,
-                     operator_open_id="", bot_open_id="", sidecar_mode=False,
+                     operator_open_id="", bot_open_id="", need_mention=False,
                      config_profile="default"):
     """Register a handoff session in the local database."""
     ok, owner = try_claim_chat(
@@ -222,7 +222,7 @@ def register_session(session_id, chat_id, session_model,
         session_model=session_model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=sidecar_mode,
+        need_mention=need_mention,
         config_profile=config_profile,
     )
     if not ok:
@@ -251,7 +251,7 @@ def takeover_chat(
     expected_owner_session_id=None,
     operator_open_id="",
     bot_open_id="",
-    sidecar_mode=False,
+    need_mention=False,
     config_profile="default",
 ):
     """Atomically take over a chat for the given session.
@@ -305,7 +305,7 @@ def takeover_chat(
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, chat_id, tool, session_model, int(time.time()),
              operator_open_id or "", bot_open_id or "",
-             1 if sidecar_mode else 0, "[]", config_profile or "default"),
+             1 if need_mention else 0, "[]", config_profile or "default"),
         )
         conn.execute("COMMIT")
         return True, session_id, replaced_owner
@@ -446,7 +446,7 @@ def get_session(session_id):
 
     Dict keys: session_id, chat_id, session_tool, session_model,
     last_checked, activated_at, message_filter, operator_open_id, bot_open_id,
-    sidecar_mode, guests.
+    need_mention, guests.
     """
     conn = _get_db()
     try:
@@ -481,7 +481,7 @@ def get_session(session_id):
                 "message_filter": row[6] or "concise",
                 "operator_open_id": row[7] or "",
                 "bot_open_id": row[8] or "",
-                "sidecar_mode": bool(row[9]),
+                "need_mention": bool(row[9]),
                 "guests": guests,
                 "autoapprove": bool(row[11]),
                 "config_profile": row[12] or "default",
@@ -755,7 +755,7 @@ def get_active_sessions():
                 "session_model": r[5],
                 "operator_open_id": r[6] or "",
                 "bot_open_id": r[7] or "",
-                "sidecar_mode": bool(r[8]),
+                "need_mention": bool(r[8]),
                 "config_profile": r[9] or "default",
             }
             for r in rows
@@ -797,14 +797,14 @@ def set_session_last_checked(session_id, ts):
 
 
 def activate_handoff(session_id, chat_id, session_model, operator_open_id="",
-                     bot_open_id="", sidecar_mode=False, config_profile="default"):
+                     bot_open_id="", need_mention=False, config_profile="default"):
     """Activate handoff for a session (local DB only)."""
     register_session(
         session_id, chat_id,
         session_model=session_model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=sidecar_mode,
+        need_mention=need_mention,
         config_profile=config_profile,
     )
 
@@ -930,7 +930,7 @@ def get_latest_sent_message(session_id):
 def is_bot_sent_message(message_id):
     """Check if a message_id was sent by the bot (exists in messages with direction='sent').
 
-    Used by the sidecar-mode interaction filter to detect replies to bot messages.
+    Used by the need_mention interaction filter to detect replies to bot messages.
     The message_id here is the Lark source_message_id (not the internal DB key).
     """
     if not message_id:

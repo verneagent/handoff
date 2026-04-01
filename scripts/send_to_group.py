@@ -309,7 +309,7 @@ def send(token, chat_id, title, message, is_card, color, buttons=None,
     """Send a top-level message to the group. Returns message_id.
 
     mention_user_id: if provided, prepend an @-mention to the message body.
-    Used in sidecar mode to notify the operator of each response.
+    Used when need_mention is set to notify the operator of each response.
     """
     _reset_working_state()
     # Prepend @-mention if requested (Lark Card V2 markdown syntax)

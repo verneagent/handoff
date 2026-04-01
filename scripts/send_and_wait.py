@@ -56,7 +56,7 @@ def main():
     parser.add_argument(
         "--mention-user-id",
         default=None,
-        help="Open ID to @-mention in the message (overrides sidecar default)",
+        help="Open ID to @-mention in the message (overrides auto-detected default)",
     )
     args = parser.parse_args()
 
@@ -86,11 +86,11 @@ def main():
     if args.timeout is None:
         args.timeout = handoff_config.default_poll_timeout(ctx.get("session"))
 
-    # In sidecar mode, @-mention the target user so they get notified.
+    # When need_mention is set, @-mention the target user so they get notified.
     # --mention-user-id overrides (for guest replies); otherwise default to operator.
     session_for_send = ctx.get("session") or {}
     mention_user_id = args.mention_user_id if hasattr(args, "mention_user_id") else None
-    if not mention_user_id and session_for_send.get("sidecar_mode"):
+    if not mention_user_id and session_for_send.get("need_mention"):
         mention_user_id = session_for_send.get("operator_open_id") or None
 
     # Clear the "thinking" reaction before sending the response
@@ -110,7 +110,7 @@ def main():
     warn("Response sent. Waiting for next message...")
 
     # --- Wait phase (reuse wait_for_reply logic) ---
-    # Re-read session to get fresh last_checked, operator_open_id, bot_open_id, sidecar_mode, guests
+    # Re-read session to get fresh last_checked, operator_open_id, bot_open_id, need_mention, guests
     session = handoff_db.get_session(session_id)
     _profile = session.get("config_profile", "default") if session else "default"
     worker_url = handoff_config.load_worker_url(profile=_profile)
@@ -120,7 +120,7 @@ def main():
     since = session.get("last_checked") if session else None
     operator_open_id = session.get("operator_open_id", "") if session else ""
     bot_open_id = session.get("bot_open_id", "") if session else ""
-    sidecar_mode = session.get("sidecar_mode", False) if session else False
+    need_mention = session.get("need_mention", False) if session else False
     guests = (session.get("guests") or []) if session else []
     member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
     if not since:
@@ -146,7 +146,7 @@ def main():
                         replies, operator_open_id, member_roles)
                 else:
                     replies = wait_for_reply.filter_by_operator(replies, operator_open_id)
-            if sidecar_mode and replies:
+            if need_mention and replies:
                 replies = wait_for_reply.filter_bot_interactions(replies, bot_open_id)
             if replies:
                 wait_for_reply.handle_result(replies, worker_url, chat_id, session_id)
@@ -186,7 +186,7 @@ def main():
                         replies, operator_open_id, member_roles)
                 else:
                     replies = wait_for_reply.filter_by_operator(replies, operator_open_id)
-                if sidecar_mode:
+                if need_mention:
                     replies = wait_for_reply.filter_bot_interactions(replies, bot_open_id)
                 if replies:
                     wait_for_reply.handle_result(

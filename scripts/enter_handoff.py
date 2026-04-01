@@ -160,7 +160,7 @@ def main():
     p.add_argument(
         "--group-name",
         default=None,
-        help="Join a specific group by name (auto-detects sidecar vs regular)",
+        help="Join a specific group by name (auto-detects need_mention)",
     )
     p.add_argument(
         "--profile",
@@ -217,13 +217,12 @@ def main():
 
     # ── Group-name shortcut ───────────────────────────────────────────────
     # When --group-name is given, look up the group across ALL bot chats
-    # and auto-detect sidecar (external) vs regular (workspace-tagged).
+    # and auto-detect need_mention based on group membership.
     if args.group_name:
         match = find_group_by_name(token, args.group_name, open_id or None)
         if not match:
             _jprint({"error": "group_not_found", "group_name": args.group_name})
             return 1
-        sidecar = match["external"]
         chat_id_to_activate = match["chat_id"]
 
         model = str(args.session_model).strip()
@@ -236,13 +235,16 @@ def main():
         except Exception:
             pass
 
+        from handoff_lifecycle import compute_need_mention
+        need_mention = compute_need_mention(token, chat_id_to_activate, bot_open_id)
+
         handoff_db.activate_handoff(
             session_id,
             chat_id_to_activate,
             session_model=model,
             operator_open_id=open_id,
             bot_open_id=bot_open_id,
-            sidecar_mode=sidecar,
+            need_mention=need_mention,
             config_profile=profile,
         )
         _persist_profile_env(profile)
@@ -251,7 +253,6 @@ def main():
             "chat_id": chat_id_to_activate,
             "session_id": session_id,
             "project_dir": project_dir,
-            "sidecar_mode": sidecar,
         })
         return 0
 
@@ -346,13 +347,16 @@ def main():
     except Exception:
         pass
 
+    from handoff_lifecycle import compute_need_mention
+    need_mention = compute_need_mention(token, chat_id_to_activate, bot_open_id)
+
     handoff_db.activate_handoff(
         session_id,
         chat_id_to_activate,
         session_model=model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=False,
+        need_mention=need_mention,
         config_profile=profile,
     )
     _persist_profile_env(profile)

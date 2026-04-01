@@ -266,7 +266,7 @@ def cmd_discover(args):
 
 
 def cmd_discover_bot(args):
-    """Discover external groups for sidecar mode (groups without workspace tag)."""
+    """Discover external groups (groups without workspace tag)."""
     creds = _require_credentials()
     token = _require_token(creds)
     email = creds.get("email", "")
@@ -426,22 +426,29 @@ def cmd_activate(args):
     # Resolve operator open_id and bot open_id
     operator_open_id = ""
     bot_open_id = ""
+    _token = None
     try:
         creds = handoff_config.load_credentials(profile=profile)
         email = creds.get("email", "") if creds else ""
         if email:
-            token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
-            operator_open_id = lark_im.lookup_open_id_by_email(token, email) or ""
-            bot_info = lark_im.get_bot_info(token)
+            _token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
+            operator_open_id = lark_im.lookup_open_id_by_email(_token, email) or ""
+            bot_info = lark_im.get_bot_info(_token)
             bot_open_id = bot_info.get("open_id", "")
     except Exception as exc:
         _warn(f"failed to resolve operator/bot open_id: {exc}")
-    sidecar_mode = getattr(args, "sidecar_mode", False)
+    need_mention = False
+    try:
+        if _token and bot_open_id:
+            from handoff_lifecycle import compute_need_mention
+            need_mention = compute_need_mention(_token, args.chat_id, bot_open_id)
+    except Exception as exc:
+        _warn(f"compute_need_mention failed: {exc}")
     handoff_db.activate_handoff(
         sid, args.chat_id, session_model=model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=sidecar_mode,
+        need_mention=need_mention,
         config_profile=profile,
     )
     # Best-effort: update MEMORY.md with handoff-specific instructions
@@ -2087,8 +2094,6 @@ def cmd_agent_spawn(args):
     ]
     if profile != "default":
         cmd += ["--profile", profile]
-    if getattr(args, "sidecar", False):
-        cmd += ["--sidecar"]
 
     with open(log_path, "a") as log_f:
         proc = subprocess.Popen(
@@ -2131,7 +2136,6 @@ def build_parser():
     s = sub.add_parser("activate")
     s.add_argument("--chat-id", required=True, type=_chat_id_type)
     s.add_argument("--session-model", required=True)
-    s.add_argument("--sidecar", dest="sidecar_mode", action="store_true")
     s.set_defaults(func=cmd_activate)
 
     s = sub.add_parser("takeover")
@@ -2355,7 +2359,6 @@ def build_parser():
     s = sub.add_parser("agent-spawn")
     s.add_argument("--project-dir", default=None)
     s.add_argument("--model", default="claude-opus-4-6")
-    s.add_argument("--sidecar", action="store_true")
     s.set_defaults(func=cmd_agent_spawn)
 
     return p

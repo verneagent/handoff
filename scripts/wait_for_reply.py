@@ -67,7 +67,7 @@ def filter_by_allowed_senders(replies, operator_open_id, member_roles):
 
     member_roles: dict mapping open_id → role ("guest" or "coowner").
     Tags each reply with "privilege": "owner", "coowner", or "guest".
-    Applied when members are configured (both regular and sidecar mode).
+    Applied when members are configured (both regular and need_mention mode).
     """
     allowed = {operator_open_id} if operator_open_id else set()
     roles = dict(member_roles or {})
@@ -360,7 +360,7 @@ def main():
     since = session.get("last_checked")
     operator_open_id = session.get("operator_open_id", "")
     bot_open_id = session.get("bot_open_id", "")
-    sidecar_mode = session.get("sidecar_mode", False)
+    need_mention = session.get("need_mention", False)
     guests = session.get("guests") or []
     member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
 
@@ -411,7 +411,7 @@ def main():
                             replies, operator_open_id, member_roles)
                     else:
                         replies = filter_by_operator(replies, operator_open_id)
-                if sidecar_mode and replies:
+                if need_mention and replies:
                     replies = filter_bot_interactions(replies, bot_open_id)
                 if replies:
                     handle_result(replies, worker_url, chat_id, session_id)
@@ -468,7 +468,7 @@ def main():
                         replies, operator_open_id, member_roles)
                 else:
                     replies = filter_by_operator(replies, operator_open_id)
-                if sidecar_mode:
+                if need_mention:
                     replies = filter_bot_interactions(replies, bot_open_id)
                 if replies:
                     handle_result(replies, worker_url, chat_id, session_id)

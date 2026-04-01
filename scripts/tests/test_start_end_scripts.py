@@ -11,7 +11,6 @@ import unittest
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 
-import lark_im  # type: ignore
 import end_and_cleanup  # type: ignore
 import start_and_wait  # type: ignore
 
@@ -20,7 +19,6 @@ class StartAndWaitTest(unittest.TestCase):
     def setUp(self):
         self._orig_run_tool = start_and_wait.script_utils.run_tool
         self._orig_subprocess_run = start_and_wait.subprocess.run
-        self._orig_resolve = lark_im.resolve_session_context
         self.run_calls = []
         self.wait_calls = []
         self.fail_on = None
@@ -37,15 +35,10 @@ class StartAndWaitTest(unittest.TestCase):
 
         start_and_wait.script_utils.run_tool = fake_run_tool  # type: ignore
         start_and_wait.subprocess.run = fake_subprocess_run  # type: ignore
-        # Mock resolve_session_context to avoid picking up real session state
-        lark_im.resolve_session_context = lambda: {
-            "session": {"sidecar_mode": False},
-        }
 
     def tearDown(self):
         start_and_wait.script_utils.run_tool = self._orig_run_tool  # type: ignore
         start_and_wait.subprocess.run = self._orig_subprocess_run  # type: ignore
-        lark_im.resolve_session_context = self._orig_resolve
 
     def _run(self, argv):
         old_argv = sys.argv

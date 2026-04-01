@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for sidecar-mode filters, operator filtering, and session sidecar_mode/bot_open_id fields.
+"""Tests for need_mention filters, operator filtering, and session need_mention/bot_open_id fields.
 
 Covers:
 - filter_by_operator() — operator-level message filtering
-- filter_bot_interactions() — expanded sidecar-mode filter (3 conditions)
+- filter_bot_interactions() — expanded need_mention filter (3 conditions)
 - is_bot_sent_message() — parent message lookup in local DB
-- sidecar_mode / bot_open_id session fields — stored and read correctly
+- need_mention / bot_open_id session fields — stored and read correctly
 """
 
 import os
@@ -353,11 +353,11 @@ class IsBotSentMessageTest(_DbTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Session sidecar_mode / bot_open_id fields
+# Session need_mention / bot_open_id fields
 # ---------------------------------------------------------------------------
 
 class SessionBotFieldsTest(_DbTestCase):
-    """Tests for sidecar_mode and bot_open_id in session storage."""
+    """Tests for need_mention and bot_open_id in session storage."""
 
     def test_register_session_stores_bot_open_id(self):
         """bot_open_id is stored and retrieved correctly."""
@@ -368,21 +368,21 @@ class SessionBotFieldsTest(_DbTestCase):
         self.assertIsNotNone(sess)
         self.assertEqual(sess["bot_open_id"], "ou_bot123")
 
-    def test_register_session_stores_sidecar_mode(self):
-        """sidecar_mode is stored and retrieved correctly."""
+    def test_register_session_stores_need_mention(self):
+        """need_mention is stored and retrieved correctly."""
         handoff_db.register_session(
-            "s1", "chat-1", "opus", sidecar_mode=True
+            "s1", "chat-1", "opus", need_mention=True
         )
         sess = handoff_db.get_session("s1")
         self.assertIsNotNone(sess)
-        self.assertTrue(sess["sidecar_mode"])
+        self.assertTrue(sess["need_mention"])
 
-    def test_register_session_defaults_sidecar_mode_false(self):
-        """sidecar_mode defaults to False when not specified."""
+    def test_register_session_defaults_need_mention_false(self):
+        """need_mention defaults to False when not specified."""
         handoff_db.register_session("s1", "chat-1", "opus")
         sess = handoff_db.get_session("s1")
         self.assertIsNotNone(sess)
-        self.assertFalse(sess["sidecar_mode"])
+        self.assertFalse(sess["need_mention"])
 
     def test_register_session_defaults_bot_open_id_empty(self):
         """bot_open_id defaults to empty string when not specified."""
@@ -401,16 +401,16 @@ class SessionBotFieldsTest(_DbTestCase):
         self.assertEqual(sess["operator_open_id"], "ou_op456")
 
     def test_activate_handoff_passes_bot_fields(self):
-        """activate_handoff forwards sidecar_mode and bot_open_id to register_session."""
+        """activate_handoff forwards need_mention and bot_open_id to register_session."""
         handoff_db.activate_handoff(
             "s2", "chat-2", session_model="opus",
-            operator_open_id="ou_op", bot_open_id="ou_bot", sidecar_mode=True,
+            operator_open_id="ou_op", bot_open_id="ou_bot", need_mention=True,
         )
         sess = handoff_db.get_session("s2")
         self.assertIsNotNone(sess)
         self.assertEqual(sess["operator_open_id"], "ou_op")
         self.assertEqual(sess["bot_open_id"], "ou_bot")
-        self.assertTrue(sess["sidecar_mode"])
+        self.assertTrue(sess["need_mention"])
 
     def test_takeover_preserves_bot_fields(self):
         """takeover_chat stores bot_open_id for the new session."""
@@ -426,15 +426,15 @@ class SessionBotFieldsTest(_DbTestCase):
         self.assertEqual(sess["bot_open_id"], "ou_newbot")
 
     def test_get_active_sessions_includes_bot_fields(self):
-        """get_active_sessions returns sidecar_mode and bot_open_id."""
+        """get_active_sessions returns need_mention and bot_open_id."""
         handoff_db.register_session(
             "s1", "chat-1", "opus",
-            bot_open_id="ou_bot", sidecar_mode=True,
+            bot_open_id="ou_bot", need_mention=True,
         )
         sessions = handoff_db.get_active_sessions()
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0]["bot_open_id"], "ou_bot")
-        self.assertTrue(sessions[0]["sidecar_mode"])
+        self.assertTrue(sessions[0]["need_mention"])
 
 
 # ---------------------------------------------------------------------------
@@ -482,19 +482,19 @@ class FilterChainIntegrationTest(unittest.TestCase):
         self.assertIn("help", texts)  # "@Bot help" -> stripped to "help"
         self.assertIn("thanks", texts)
 
-    def test_non_sidecar_mode_skips_bot_filter(self):
-        """When sidecar_mode is False, only operator filter is applied."""
+    def test_non_need_mention_skips_bot_filter(self):
+        """When need_mention is False, only operator filter is applied."""
         replies = [
             {"sender_id": "op1", "text": "hello"},
             {"sender_id": "other", "text": "hi"},
         ]
         after_op = wait_for_reply.filter_by_operator(replies, "op1")
         self.assertEqual(len(after_op), 1)
-        # In non-sidecar mode, no bot filter is applied
+        # When need_mention is False, no bot filter is applied
         self.assertEqual(after_op[0]["text"], "hello")
 
-    def test_non_sidecar_with_guests_no_bot_filter(self):
-        """In regular mode with guests, sender filter applies but bot filter does not."""
+    def test_non_need_mention_with_guests_no_bot_filter(self):
+        """When need_mention is False with guests, sender filter applies but bot filter does not."""
         replies = [
             {"sender_id": "op1", "text": "owner msg"},
             {"sender_id": "g1", "text": "guest msg"},
@@ -511,7 +511,7 @@ class FilterChainIntegrationTest(unittest.TestCase):
         self.assertEqual(after_senders[1]["privilege"], "guest")
         self.assertEqual(after_senders[2]["privilege"], "coowner")
 
-        # In regular mode (sidecar_mode=False), bot filter is NOT applied,
+        # When need_mention is False, bot filter is NOT applied,
         # so all 3 messages pass through without needing @-mentions.
 
 

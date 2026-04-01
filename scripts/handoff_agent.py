@@ -114,7 +114,7 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
 
     operator_open_id = session.get("operator_open_id", "")
     bot_open_id = session.get("bot_open_id", "")
-    sidecar_mode = session.get("sidecar_mode", False)
+    need_mention = session.get("need_mention", False)
     guests = session.get("guests") or []
     member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
 
@@ -155,7 +155,7 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
             if replies:
                 replies = (wfr_mod.filter_by_allowed_senders(replies, operator_open_id, member_roles)
                            if member_roles else wfr_mod.filter_by_operator(replies, operator_open_id))
-            if sidecar_mode and replies:
+            if need_mention and replies:
                 replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
             if replies:
                 return _finish(replies)
@@ -181,7 +181,7 @@ def wait_for_reply_inline(chat_id, session, profile, timeout=300):
                 replies = wfr_mod.filter_self_bot(replies, bot_open_id)
                 replies = (wfr_mod.filter_by_allowed_senders(replies, operator_open_id, member_roles)
                            if member_roles else wfr_mod.filter_by_operator(replies, operator_open_id))
-                if sidecar_mode:
+                if need_mention:
                     replies = wfr_mod.filter_bot_interactions(replies, bot_open_id)
                 if replies:
                     return _finish(replies)
@@ -357,7 +357,7 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
     return esc_found, buffered
 
 
-async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
+async def main_loop(chat_id, project_dir, model, profile=None):
     """Main agent loop."""
     import uuid
     session_id = str(uuid.uuid4())
@@ -419,15 +419,18 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
         except Exception as e:
             _log(f"send_takeover error: {e}")
 
+    # Auto-detect need_mention before activating
+    need_mention = handoff_lifecycle.compute_need_mention(token, chat_id, bot_open_id)
+
     handoff_lifecycle.activate(
         session_id, chat_id, model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=sidecar,
+        need_mention=need_mention,
         config_profile=resolved_profile,
     )
     _log(f"Activated session {session_id} for chat {chat_id}"
-         + (f" (sidecar)" if sidecar else ""))
+         + (f" (need_mention)" if need_mention else ""))
 
     handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
     _log(f"Agent started. Project: {project_dir}")
@@ -514,7 +517,7 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                     replies = wfr_mod.filter_by_allowed_senders(replies, op_oid, m_roles)
                 else:
                     replies = wfr_mod.filter_by_operator(replies, op_oid)
-                if sidecar:
+                if session.get("need_mention", False):
                     replies = wfr_mod.filter_bot_interactions(replies, bot_oid)
                 if not replies:
                     continue
@@ -823,7 +826,6 @@ def main():
     parser.add_argument("--project-dir", required=True, help="Project directory")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")
     parser.add_argument("--profile", default=None, help="Config profile name")
-    parser.add_argument("--sidecar", action="store_true", help="Enable sidecar mode")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -831,8 +833,7 @@ def main():
         print(f"Error: {project_dir} is not a directory", file=sys.stderr)
         return 1
 
-    return asyncio.run(main_loop(args.chat_id, project_dir, args.model, args.profile,
-                                 sidecar=args.sidecar))
+    return asyncio.run(main_loop(args.chat_id, project_dir, args.model, args.profile))
 
 
 if __name__ == "__main__":

@@ -58,16 +58,10 @@ def main():
 
     chat_id = session.get("chat_id", "")
 
-    sidecar_mode = session.get("sidecar_mode", False)
-
     # Deactivate handoff
     handoff_db.deactivate_handoff(session_id)
 
     if not chat_id:
-        return
-
-    # In sidecar mode, skip the Session Ended card (external group, no modifications)
-    if sidecar_mode:
         return
 
     # Send notification to Lark

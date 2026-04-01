@@ -36,10 +36,6 @@ def main():
     if not session:
         return
 
-    # In sidecar mode, skip compaction warnings (external group, minimal noise)
-    if session.get("sidecar_mode", False):
-        return
-
     trigger = hook_input.get("trigger", "auto")
 
     chat_id = session["chat_id"]

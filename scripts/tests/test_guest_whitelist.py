@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the sidecar guest whitelist feature.
+"""Tests for the guest whitelist feature.
 
 Covers:
 - filter_by_allowed_senders() — operator + guest message filtering with privilege tags
@@ -473,7 +473,7 @@ class GuestFilterChainIntegrationTest(unittest.TestCase):
         self.assertEqual(result[0]["privilege"], "owner")
 
     def test_coowner_passes_without_bot_filter_in_regular_mode(self):
-        """In regular mode (no sidecar), coowner messages pass sender filter directly."""
+        """In regular mode (no need_mention), coowner messages pass sender filter directly."""
         replies = [
             {"sender_id": "co1", "text": "do this"},
             {"sender_id": "op1", "text": "ok"},

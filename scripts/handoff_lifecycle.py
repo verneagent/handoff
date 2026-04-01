@@ -119,16 +119,33 @@ def reset_working_card(session_id):
 
 
 def activate(session_id, chat_id, model, operator_open_id="",
-             bot_open_id="", sidecar_mode=False, config_profile="default"):
+             bot_open_id="", need_mention=False, config_profile="default"):
     """Activate a handoff session in the DB."""
     handoff_db.activate_handoff(
         session_id, chat_id,
         session_model=model,
         operator_open_id=operator_open_id,
         bot_open_id=bot_open_id,
-        sidecar_mode=sidecar_mode,
+        need_mention=need_mention,
         config_profile=config_profile,
     )
+
+
+def compute_need_mention(token, chat_id, bot_open_id):
+    """Auto-detect if @-mention is required for this group.
+
+    Bot-created group or <=2 members -> False (no mention needed)
+    Otherwise -> True (must @ mention bot)
+    """
+    try:
+        info = lark_im.get_chat_info(token, chat_id)
+        owner_id = info.get("owner_id", "")
+        member_count = info.get("user_count", 0) or info.get("member_count", 0)
+        if owner_id == bot_open_id or member_count <= 2:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def deactivate(session_id):
