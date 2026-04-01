@@ -398,6 +398,11 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
         owner = handoff_db.get_chat_owner_session(chat_id)
         if owner:
             _log(f"Cleaning stale session {owner} for chat {chat_id}")
+            # Reset any leftover Working card from the old session
+            try:
+                handoff_lifecycle.reset_working_card(owner)
+            except Exception:
+                pass
             handoff_db.deactivate_handoff(owner)
             had_stale = True
     except Exception as e:
