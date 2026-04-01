@@ -239,11 +239,10 @@ def _build_agent_options(project_dir, model):
 
 async def run_agent_turn(client, prompt):
     """Send a prompt to the persistent SDK client. Returns (result_text, cost)."""
-    from claude_agent_sdk import AssistantMessage, TextBlock, ResultMessage
+    from claude_agent_sdk import ResultMessage
 
     await client.query(prompt)
     result_text = None
-    last_assistant_text = None
     cost = 0.0
     async for message in client.receive_response():
         if isinstance(message, ResultMessage):
@@ -251,12 +250,8 @@ async def run_agent_turn(client, prompt):
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
             _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
-        elif isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    last_assistant_text = block.text
-    # Prefer ResultMessage.result (the final summary); fall back to last TextBlock
-    return (result_text or last_assistant_text or "(no response)"), cost
+    # Only use ResultMessage.result — intermediate output is handled by hooks
+    return result_text, cost
 
 
 def _is_esc_command(text, mentions=None):
@@ -741,7 +736,7 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                     stop_event.set()
                     result, turn_cost = sdk_task.result()
                     total_cost += turn_cost
-                    _log(f"Agent turn done. Result length: {len(result)}")
+                    _log(f"Agent turn done. Result length: {len(result) if result else 0}")
 
                     if result and result.strip():
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
