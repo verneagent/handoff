@@ -703,7 +703,7 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                 )
 
                 if monitor_task in done:
-                    # Monitor finished first — /esc or takeover
+                    # Monitor finished first — /esc, takeover, or WS disconnect
                     esc_found, buffered = monitor_task.result()
                     if esc_found:
                         _log("Esc received — interrupting SDK")
@@ -721,12 +721,16 @@ async def main_loop(chat_id, project_dir, model, profile=None, sidecar=False):
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(token, chat_id, "Operation cancelled.")
                     else:
-                        # Takeover or monitor ended without esc — get SDK result
+                        # Monitor exited without esc (WS disconnect or takeover).
+                        # Wait for SDK to finish — don't restart monitor, just wait.
+                        _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
                         result, turn_cost = await sdk_task
                         total_cost += turn_cost
+                        _log(f"Agent turn done. Result length: {len(result) if result else 0}")
                         if result and result.strip():
                             token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                             send_response_inline(token, chat_id, result)
+                            _log("Response sent.")
                     # Inject buffered messages for next iteration
                     if buffered:
                         takeover_msgs = [m for m in buffered if m.get("_takeover")]
