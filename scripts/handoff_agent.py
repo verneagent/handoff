@@ -678,7 +678,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if msg_lower in ("/usage", "usage"):
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 send_response_inline(token, chat_id,
-                    "Plan usage is only available at [claude.ai/settings/usage](https://claude.ai/settings/usage)")
+                    "Plan usage: [claude.ai/settings/usage](https://claude.ai/settings/usage)")
                 continue
 
             # Check /help
