@@ -1,4 +1,11 @@
 #!/bin/sh
-# Spawn a handoff agent in the current directory.
-# Usage: hagent [-c chat_id] [-g group_name] [--model MODEL] [--profile PROFILE]
-exec python3 "$(dirname "$0")/handoff_ops.py" agent-spawn --project-dir . "$@"
+# Spawn a handoff agent.
+# Usage: hagent [dir] [-c chat_id] [-g group_name] [--model MODEL] [--profile PROFILE]
+#   dir: project directory (default: current directory)
+
+dir="."
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  dir="$1"
+  shift
+fi
+exec python3 "$(dirname "$0")/handoff_ops.py" agent-spawn --project-dir "$dir" "$@"
