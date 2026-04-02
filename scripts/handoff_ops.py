@@ -2037,19 +2037,21 @@ def cmd_agent_spawn(args):
         )
         group_name = f"{worktree}@{machine}"
 
-    # Clean up stale DB sessions. Takeover signal is sent by
-    # handoff_agent.py's main_loop to avoid race conditions.
+    # If the group already has an active session, don't spawn a duplicate.
     try:
         old_env = os.environ.get("HANDOFF_PROJECT_DIR")
         os.environ["HANDOFF_PROJECT_DIR"] = project_dir
-        stale = handoff_db.get_active_sessions()
-        for s in stale:
-            if s.get("chat_id") == chat_id:
-                handoff_db.unregister_session(s["session_id"])
+        active = handoff_db.get_active_sessions()
         if old_env:
             os.environ["HANDOFF_PROJECT_DIR"] = old_env
         elif "HANDOFF_PROJECT_DIR" in os.environ:
             del os.environ["HANDOFF_PROJECT_DIR"]
+        for s in active:
+            if s.get("chat_id") == chat_id:
+                _jprint({"error": "agent_already_active",
+                         "chat_id": chat_id, "group_name": group_name,
+                         "session_id": s["session_id"]})
+                return 1
     except Exception:
         pass
 
