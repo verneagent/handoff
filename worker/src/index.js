@@ -559,6 +559,12 @@ async function handleWebhook(request, env) {
         await env.LARK_REPLIES.put(`stop:chat:${chatId}`, "1", {
           expirationTtl: 300,
         });
+        // Push stop signal to DO so WS-connected clients see it immediately
+        await pushToDO(env, `chat:${chatId}`, {
+          text: "__stop__",
+          msg_type: "stop_signal",
+          create_time: String(Date.now()),
+        });
       }
       return Response.json({
         toast: { type: "warning", content: "Stopping..." },

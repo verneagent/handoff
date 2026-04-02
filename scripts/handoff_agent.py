@@ -302,16 +302,48 @@ def _is_esc_command(text, mentions=None):
     return t in ("/esc", "esc", "cancel", "取消")
 
 
-def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
+def _is_authorized_sender(reply, operator_open_id, member_roles):
+    """Check if a reply is from an authorized sender (operator or coowner).
+
+    If no operator info is available, allows all senders (graceful fallback).
+    """
+    if not operator_open_id:
+        return True  # No session info — allow all
+    sid = reply.get("sender_id", "")
+    if not sid:
+        return False
+    if sid == operator_open_id:
+        return True
+    if member_roles and sid in member_roles:
+        role = member_roles[sid]
+        return role == "coowner"
+    return False
+
+
+def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
+                          session=None):
     """Monitor for new messages while SDK is running. Runs in a thread.
 
     Uses a single persistent WS connection with short recv timeouts to
     check stop_event between receives — no reconnection overhead.
 
+    Recognises ``stop_signal`` messages pushed by the worker when the card
+    Stop button is clicked, treating them as equivalent to /esc.
+
+    Only /esc commands from authorized senders (operator or coowner) are
+    honoured; need_mention filtering is applied when enabled.
+
     Returns (esc_found: bool, buffered_replies: list).
     Messages are acked by WS automatically, so we must buffer them.
     """
     import socket as _socket
+
+    # Extract session info for sender/mention filtering
+    operator_open_id = (session or {}).get("operator_open_id", "")
+    bot_open_id = (session or {}).get("bot_open_id", "")
+    need_mention = (session or {}).get("need_mention", False)
+    guests = (session or {}).get("guests") or []
+    member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
 
     buffered = []
     esc_found = False
@@ -372,7 +404,27 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event):
                     except Exception:
                         pass
                 for r in replies:
+                    # Stop signal from card button (already authorized by worker)
+                    if r.get("msg_type") == "stop_signal":
+                        _log("Stop signal received (card button) — treating as /esc")
+                        esc_found = True
+                        return esc_found, buffered
                     if _is_esc_command(r.get("text", ""), r.get("mentions")):
+                        # Only honour /esc from authorized senders
+                        if not _is_authorized_sender(r, operator_open_id, member_roles):
+                            buffered.append(r)
+                            continue
+                        # In need_mention mode, require @-mention or reply-to-bot
+                        if need_mention:
+                            mentions = r.get("mentions") or []
+                            is_mentioned = bot_open_id and any(
+                                m.get("id") == bot_open_id for m in mentions
+                            )
+                            parent_id = r.get("parent_id", "")
+                            is_reply_to_bot = bool(parent_id) and handoff_db.is_bot_sent_message(parent_id)
+                            if not is_mentioned and not is_reply_to_bot:
+                                buffered.append(r)
+                                continue
                         esc_found = True
                         return esc_found, buffered
                     buffered.append(r)
@@ -753,6 +805,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 monitor_task = asyncio.get_running_loop().run_in_executor(
                     None, _message_monitor_sync,
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
+                    session,
                 )
                 sdk_task = asyncio.create_task(run_agent_turn(client, user_message))
 
