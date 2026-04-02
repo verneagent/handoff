@@ -250,9 +250,10 @@ def _build_agent_options(project_dir, model):
 async def run_agent_turn(client, prompt):
     """Send a prompt to the persistent SDK client. Returns (result_text, cost).
 
-    Uses receive_messages() instead of receive_response() to handle
-    background tasks (subagents). Waits for ResultMessage AND all pending
-    tasks to complete before returning.
+    Returns as soon as ResultMessage is received. Background tasks
+    (run_in_background agents) may still be running — their completions
+    will arrive as TaskNotificationMessage in subsequent turns, but they
+    should NOT block the current turn (same as Claude Code's behavior).
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
@@ -263,39 +264,21 @@ async def run_agent_turn(client, prompt):
     result_text = None
     last_assistant_text = None
     cost = 0.0
-    got_result = False
-    result_time = None
-    pending_tasks = set()
-    # Timeout for waiting on stale subagent tasks after ResultMessage.
-    # If subagents don't finish within this window, we return anyway.
-    SUBTASK_TIMEOUT = 120  # seconds
     async for message in client.receive_messages():
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, TextBlock):
                     last_assistant_text = block.text
         elif isinstance(message, TaskStartedMessage):
-            pending_tasks.add(message.task_id)
             _log(f"Task started: {message.task_id}")
         elif isinstance(message, TaskNotificationMessage):
-            pending_tasks.discard(message.task_id)
             _log(f"Task done: {message.task_id} ({message.status})")
         elif isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
             _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
-            got_result = True
-            result_time = time.time()
-            if not pending_tasks:
-                break
-        if got_result and not pending_tasks:
             break
-        if got_result and pending_tasks and result_time:
-            elapsed = time.time() - result_time
-            if elapsed > SUBTASK_TIMEOUT:
-                _log(f"Subtask timeout ({SUBTASK_TIMEOUT}s) — abandoning {len(pending_tasks)} pending task(s)")
-                break
     # Last AssistantMessage TextBlock has the full response;
     # ResultMessage.result is often a truncated summary.
     return (last_assistant_text or result_text), cost
