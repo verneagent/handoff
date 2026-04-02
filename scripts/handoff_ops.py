@@ -2027,12 +2027,16 @@ def cmd_agent_spawn(args):
     elif group_name_arg:
         # Search by group name — takeover if found
         from send_to_group import find_group_by_name
-        match = find_group_by_name(token, group_name_arg, open_id or None)
-        if not match:
+        matches = find_group_by_name(token, group_name_arg, open_id or None)
+        if not matches:
             _jprint({"error": "group_not_found", "group_name": group_name_arg})
             return 1
-        chat_id = match["chat_id"]
-        group_name = match.get("name", "")
+        if len(matches) > 1:
+            _jprint({"error": "multiple_groups_found", "group_name": group_name_arg,
+                     "matches": [{"chat_id": m["chat_id"], "name": m["name"]} for m in matches]})
+            return 1
+        chat_id = matches[0]["chat_id"]
+        group_name = matches[0].get("name", "")
     else:
         # Discover workspace groups, pick an idle one or create new
         machine = handoff_config._get_machine_name()
@@ -2373,8 +2377,8 @@ def build_parser():
 
     s = sub.add_parser("agent-spawn")
     s.add_argument("--project-dir", default=None)
-    s.add_argument("--chat-id", default=None, help="Target group by ID (takeover if active)")
-    s.add_argument("--group-name", default=None, help="Target group by name (takeover if active)")
+    s.add_argument("-c", "--chat-id", default=None, help="Target group by ID (takeover if active)")
+    s.add_argument("-g", "--group-name", default=None, help="Target group by name (takeover if active)")
     s.add_argument("--model", default="claude-opus-4-6")
     s.set_defaults(func=cmd_agent_spawn)
 

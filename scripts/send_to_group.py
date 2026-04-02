@@ -139,15 +139,15 @@ def find_external_groups(token, open_id=None):
 
 
 def find_group_by_name(token, name, open_id=None):
-    """Find a bot group by name and return it with an ``external`` flag.
+    """Find bot groups by name.
 
     Searches all groups the bot is a member of for a case-insensitive name
-    match.  Returns ``{chat_id, name, description, external}`` where
-    ``external`` is True when the group has no ``workspace:`` tag (i.e. not
-    created by handoff).  Returns ``None`` if no match is found.
+    match.  Returns a list of ``{chat_id, name, description, external}`` dicts.
+    ``external`` is True when the group has no ``workspace:`` tag.
 
     If *open_id* is provided, only matches groups where that user is a member.
     """
+    results = []
     try:
         chats = lark_im.list_bot_chats(token)
         for chat in chats:
@@ -169,18 +169,18 @@ def find_group_by_name(token, name, open_id=None):
                     except Exception as e:
                         warn(f"failed to check members of chat {cid}: {e}")
                         continue
-                return {
+                results.append({
                     "chat_id": cid,
                     "name": chat_name,
                     "description": desc,
                     "external": "workspace:" not in desc,
-                }
+                })
             except Exception as e:
                 warn(f"failed to inspect chat {cid}: {e}")
                 continue
     except Exception as e:
         warn(f"failed to list bot chats: {e}")
-    return None
+    return results
 
 
 def compute_next_group_name(worktree, machine, existing_names):

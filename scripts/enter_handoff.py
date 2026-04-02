@@ -219,11 +219,15 @@ def main():
     # When --group-name is given, look up the group across ALL bot chats
     # and auto-detect need_mention based on group membership.
     if args.group_name:
-        match = find_group_by_name(token, args.group_name, open_id or None)
-        if not match:
+        matches = find_group_by_name(token, args.group_name, open_id or None)
+        if not matches:
             _jprint({"error": "group_not_found", "group_name": args.group_name})
             return 1
-        chat_id_to_activate = match["chat_id"]
+        if len(matches) > 1:
+            _jprint({"error": "multiple_groups_found", "group_name": args.group_name,
+                     "matches": [{"chat_id": m["chat_id"], "name": m["name"]} for m in matches]})
+            return 1
+        chat_id_to_activate = matches[0]["chat_id"]
 
         model = str(args.session_model).strip()
         if "/" in model:
