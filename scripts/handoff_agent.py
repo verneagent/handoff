@@ -665,13 +665,20 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 continue
 
             # Check /cost
-            if msg_lower in ("/cost", "cost", "/usage", "usage"):
+            if msg_lower in ("/cost", "cost"):
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 send_response_inline(token, chat_id,
-                    f"💰 Usage\n"
-                    f"- Total cost: **${total_cost:.4f}**\n"
-                    f"- Messages processed: {msg_count}\n"
+                    f"💰 Session Cost\n"
+                    f"- Total: **${total_cost:.4f}**\n"
+                    f"- Messages: {msg_count}\n"
                     f"- Model: {model}")
+                continue
+
+            # Check /usage
+            if msg_lower in ("/usage", "usage"):
+                token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                send_response_inline(token, chat_id,
+                    "Plan usage is only available at [claude.ai/settings/usage](https://claude.ai/settings/usage)")
                 continue
 
             # Check /help
@@ -687,7 +694,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     "| `/cd <dir>` | Change working directory |\n"
                     "| `/esc` | Cancel current operation |\n"
                     "| `/ping` | Status check |\n"
-                    "| `/cost` | Show API usage |\n"
+                    "| `/cost` | Session API cost |\n"
+                    "| `/usage` | Plan usage limits |\n"
                     "| `/help` | This help |\n"
                     "| `handback` | Stop agent |\n"
                     "| `filter <level>` | Set message filter |\n"
