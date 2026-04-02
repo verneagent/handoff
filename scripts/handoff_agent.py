@@ -254,15 +254,23 @@ async def run_agent_turn(client, prompt):
     background tasks (subagents). Waits for ResultMessage AND all pending
     tasks to complete before returning.
     """
-    from claude_agent_sdk import ResultMessage, TaskStartedMessage, TaskNotificationMessage
+    from claude_agent_sdk import (
+        AssistantMessage, TextBlock, ResultMessage,
+        TaskStartedMessage, TaskNotificationMessage,
+    )
 
     await client.query(prompt)
     result_text = None
+    last_assistant_text = None
     cost = 0.0
     got_result = False
     pending_tasks = set()
     async for message in client.receive_messages():
-        if isinstance(message, TaskStartedMessage):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    last_assistant_text = block.text
+        elif isinstance(message, TaskStartedMessage):
             pending_tasks.add(message.task_id)
             _log(f"Task started: {message.task_id}")
         elif isinstance(message, TaskNotificationMessage):
@@ -278,7 +286,9 @@ async def run_agent_turn(client, prompt):
                 break
         if got_result and not pending_tasks:
             break
-    return result_text, cost
+    # Last AssistantMessage TextBlock has the full response;
+    # ResultMessage.result is often a truncated summary.
+    return (last_assistant_text or result_text), cost
 
 
 def _is_esc_command(text, mentions=None):
