@@ -3,9 +3,16 @@
 # Usage: hagent [dir] [-c chat_id] [-g group_name] [--model MODEL] [--profile PROFILE]
 #   dir: project directory (default: current directory)
 
+# Resolve symlinks to find the real script directory
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  SCRIPT=$(readlink "$SCRIPT")
+done
+SCRIPT_DIR=$(cd "$(dirname "$SCRIPT")" && pwd)
+
 dir="."
 if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
   dir="$1"
   shift
 fi
-exec python3 "$(dirname "$0")/handoff_ops.py" agent-spawn --project-dir "$dir" "$@"
+exec python3 "$SCRIPT_DIR/handoff_ops.py" agent-spawn --project-dir "$dir" "$@"
