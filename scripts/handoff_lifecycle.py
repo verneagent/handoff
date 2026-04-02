@@ -140,7 +140,7 @@ def compute_need_mention(token, chat_id, bot_open_id):
     try:
         info = lark_im.get_chat_info(token, chat_id)
         owner_id = info.get("owner_id", "")
-        member_count = info.get("user_count", 0) or info.get("member_count", 0)
+        member_count = int(info.get("user_count") or info.get("member_count") or 0)
         if owner_id == bot_open_id or member_count <= 2:
             return False
         return True
