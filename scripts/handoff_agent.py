@@ -800,7 +800,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             # Run Agent SDK with concurrent /esc monitor
             try:
                 import threading
-                monitor_since = session.get("last_checked") or str(int(time.time() * 1000))
+                # Use create_time of the last processed reply as the monitor's
+                # "since" cursor.  This prevents the monitor from re-receiving
+                # the same message that wait_for_reply_inline already returned
+                # (the DB last_checked may not have propagated to the in-memory
+                # session dict yet).
+                _last_reply_time = max(
+                    (r.get("create_time", "0") for r in replies),
+                    default=None,
+                )
+                monitor_since = _last_reply_time or session.get("last_checked") or str(int(time.time() * 1000))
                 stop_event = threading.Event()
 
                 # Start monitor in background thread
