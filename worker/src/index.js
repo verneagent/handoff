@@ -492,11 +492,20 @@ async function handleWebhook(request, env) {
   const header = data.header || {};
   const event = data.event || {};
 
-  // Verify event source — reject forged/unauthenticated requests
-  if (!env.VERIFY_TOKEN) {
+  // Verify event source — reject forged/unauthenticated requests.
+  // Supports multiple apps: VERIFY_TOKEN (single) or VERIFY_TOKENS (comma-separated).
+  const validTokens = new Set();
+  if (env.VERIFY_TOKEN) validTokens.add(env.VERIFY_TOKEN);
+  if (env.VERIFY_TOKENS) {
+    for (const t of env.VERIFY_TOKENS.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed) validTokens.add(trimmed);
+    }
+  }
+  if (validTokens.size === 0) {
     return new Response("VERIFY_TOKEN not configured", { status: 500 });
   }
-  if (header.token !== env.VERIFY_TOKEN) {
+  if (!validTokens.has(header.token)) {
     console.error("VERIFY_TOKEN mismatch — rejecting webhook event.",
       "event_type:", header.event_type || "unknown",
       "event_id:", header.event_id || "unknown",

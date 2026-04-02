@@ -264,7 +264,11 @@ async def run_agent_turn(client, prompt):
     last_assistant_text = None
     cost = 0.0
     got_result = False
+    result_time = None
     pending_tasks = set()
+    # Timeout for waiting on stale subagent tasks after ResultMessage.
+    # If subagents don't finish within this window, we return anyway.
+    SUBTASK_TIMEOUT = 120  # seconds
     async for message in client.receive_messages():
         if isinstance(message, AssistantMessage):
             for block in message.content:
@@ -282,10 +286,16 @@ async def run_agent_turn(client, prompt):
             is_error = getattr(message, "is_error", False)
             _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
             got_result = True
+            result_time = time.time()
             if not pending_tasks:
                 break
         if got_result and not pending_tasks:
             break
+        if got_result and pending_tasks and result_time:
+            elapsed = time.time() - result_time
+            if elapsed > SUBTASK_TIMEOUT:
+                _log(f"Subtask timeout ({SUBTASK_TIMEOUT}s) — abandoning {len(pending_tasks)} pending task(s)")
+                break
     # Last AssistantMessage TextBlock has the full response;
     # ResultMessage.result is often a truncated summary.
     return (last_assistant_text or result_text), cost
@@ -511,7 +521,10 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     _log(f"Activated session {session_id} for chat {chat_id}"
          + (f" (need_mention)" if need_mention else ""))
 
-    handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
+    try:
+        handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
+    except Exception as e:
+        _log(f"handoff_start failed (non-fatal): {e}")
     _log(f"Agent started. Project: {project_dir}")
 
     group_name = ""
