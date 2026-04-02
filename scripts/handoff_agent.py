@@ -579,9 +579,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             # Check handback (exact match only to avoid false triggers)
             msg_lower = user_message.lower().strip()
-            if msg_lower in ("handback", "hand back", "handback dissolve",
-                             "退出", "停止", "结束", "stop", "quit", "exit"):
-                dissolve = msg_lower == "handback dissolve"
+            if msg_lower in ("handback", "hand back",
+                             "handback dissolve", "hand back dissolve"):
+                dissolve = "dissolve" in msg_lower
                 body = "Agent stopped." if not dissolve else "Agent stopped. Dissolving group..."
                 handoff_lifecycle.handoff_end(session_id, model, tool_name="Claude Agent SDK", body=body, silence=False)
                 if dissolve:
