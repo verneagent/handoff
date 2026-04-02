@@ -313,21 +313,34 @@ def _is_authorized_sender(reply, operator_open_id, member_roles):
     return False
 
 
+def _is_handback_command(text, mentions=None):
+    """Check if a message text is a handback command (after stripping mentions)."""
+    t = text.strip().lower()
+    for m in (mentions or []):
+        key = m.get("key", "")
+        if key:
+            t = t.replace(key.lower(), "").strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    return t in ("handback", "hand back", "handback dissolve", "hand back dissolve")
+
+
 def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
                           session=None):
-    """Monitor for new messages while SDK is running. Runs in a thread.
+    """Pure signal detector — watches for interrupt signals during SDK turns.
 
-    Uses a single persistent WS connection with short recv timeouts to
-    check stop_event between receives — no reconnection overhead.
+    Unlike a message relay, this monitor does NOT ack or buffer regular
+    messages.  They stay in the worker DO and are picked up by
+    wait_for_reply_inline after the turn ends.  This eliminates the
+    duplicate-message and pending_messages complexity.
 
-    Recognises ``stop_signal`` messages pushed by the worker when the card
-    Stop button is clicked, treating them as equivalent to /esc.
+    Detected signals:
+    - /esc, cancel     → "esc"
+    - stop_signal      → "esc"  (card Stop button)
+    - handback         → "handback"
+    - takeover         → "takeover"
 
-    Only /esc commands from authorized senders (operator or coowner) are
-    honoured; need_mention filtering is applied when enabled.
-
-    Returns (esc_found: bool, buffered_replies: list).
-    Messages are acked by WS automatically, so we must buffer them.
+    Returns the signal string, or None if stop_event was set or WS
+    disconnected without detecting a signal.
     """
     import socket as _socket
 
@@ -337,9 +350,6 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
     need_mention = (session or {}).get("need_mention", False)
     guests = (session or {}).get("guests") or []
     member_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
-
-    buffered = []
-    esc_found = False
 
     do_key = f"chat:{chat_id}"
     ws_url = worker_url.replace("https://", "wss://").replace("http://", "ws://")
@@ -355,15 +365,14 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
         ws.connect(timeout=10)
     except Exception as e:
         _log(f"Monitor WS connect failed: {e}")
-        return esc_found, buffered
+        return None
 
     last_ping = time.time()
     try:
         while not stop_event.is_set():
             try:
-                msg = ws.recv(timeout=5)  # Short timeout to check stop_event
+                msg = ws.recv(timeout=5)
             except _socket.timeout:
-                # Send keepalive ping every ~25s to keep proxies happy
                 if time.time() - last_ping > 25:
                     try:
                         ws.send(json.dumps({"ping": True}))
@@ -372,7 +381,7 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
                         break
                 continue
 
-            if msg is None:  # Close frame
+            if msg is None:
                 break
 
             try:
@@ -384,49 +393,43 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
                 continue
 
             if data.get("takeover"):
-                buffered.append({"_takeover": True})
-                return esc_found, buffered
+                return "takeover"
 
             replies = data.get("replies", [])
-            if replies:
-                # Ack so worker doesn't re-send
-                last = replies[-1].get("create_time", "")
-                if last:
-                    try:
-                        ws.send(json.dumps({"ack": last}))
-                    except Exception:
-                        pass
-                for r in replies:
-                    # Stop signal from card button (already authorized by worker)
-                    if r.get("msg_type") == "stop_signal":
-                        _log("Stop signal received (card button) — treating as /esc")
-                        esc_found = True
-                        return esc_found, buffered
-                    if _is_esc_command(r.get("text", ""), r.get("mentions")):
-                        # Only honour /esc from authorized senders
-                        if not _is_authorized_sender(r, operator_open_id, member_roles):
-                            buffered.append(r)
+            for r in replies:
+                # Stop signal from card button (already authorized by worker)
+                if r.get("msg_type") == "stop_signal":
+                    _log("Stop signal received (card button)")
+                    return "esc"
+
+                # /esc command — check sender authorization + need_mention
+                if _is_esc_command(r.get("text", ""), r.get("mentions")):
+                    if not _is_authorized_sender(r, operator_open_id, member_roles):
+                        continue
+                    if need_mention:
+                        mentions = r.get("mentions") or []
+                        is_mentioned = bot_open_id and any(
+                            m.get("id") == bot_open_id for m in mentions
+                        )
+                        parent_id = r.get("parent_id", "")
+                        is_reply_to_bot = bool(parent_id) and handoff_db.is_bot_sent_message(parent_id)
+                        if not is_mentioned and not is_reply_to_bot:
                             continue
-                        # In need_mention mode, require @-mention or reply-to-bot
-                        if need_mention:
-                            mentions = r.get("mentions") or []
-                            is_mentioned = bot_open_id and any(
-                                m.get("id") == bot_open_id for m in mentions
-                            )
-                            parent_id = r.get("parent_id", "")
-                            is_reply_to_bot = bool(parent_id) and handoff_db.is_bot_sent_message(parent_id)
-                            if not is_mentioned and not is_reply_to_bot:
-                                buffered.append(r)
-                                continue
-                        esc_found = True
-                        return esc_found, buffered
-                    buffered.append(r)
+                    return "esc"
+
+                # handback command
+                if _is_handback_command(r.get("text", ""), r.get("mentions")):
+                    if _is_authorized_sender(r, operator_open_id, member_roles):
+                        return "handback"
+
+            # Do NOT ack regular messages — leave them in the DO for
+            # wait_for_reply_inline to pick up after the turn.
     except Exception as e:
         _log(f"Monitor error: {e}")
     finally:
         ws.close()
 
-    return esc_found, buffered
+    return None
 
 
 async def main_loop(chat_id, project_dir, model, profile=None):
@@ -538,7 +541,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     start_time = time.time()
     msg_count = 0
     total_cost = 0.0
-    pending_messages = []  # Messages buffered by monitor during SDK execution
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
 
     def handle_signal(sig, frame):
@@ -578,45 +580,19 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     pass
                 _prev_monitor = None
 
-            # Use buffered messages from monitor if available, otherwise poll
-            if pending_messages:
-                all_pending = pending_messages
-                pending_messages = []
-                # Apply same filters as wait_for_reply_inline
-                bot_oid = session.get("bot_open_id", "")
-                op_oid = session.get("operator_open_id", "")
-                guests = session.get("guests") or []
-                m_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
-                all_pending = wfr_mod.filter_self_bot(all_pending, bot_oid)
-                if m_roles:
-                    all_pending = wfr_mod.filter_by_allowed_senders(all_pending, op_oid, m_roles)
-                else:
-                    all_pending = wfr_mod.filter_by_operator(all_pending, op_oid)
-                if session.get("need_mention", False):
-                    all_pending = wfr_mod.filter_bot_interactions(all_pending, bot_oid)
-                if not all_pending:
-                    continue
-                # Process first message now, re-queue the rest so each gets
-                # its own SDK turn (avoids joining N messages into one prompt
-                # where the LLM only addresses the first).
-                replies = [all_pending[0]]
-                if len(all_pending) > 1:
-                    pending_messages.extend(all_pending[1:])
-                _log(f"Processing buffered message 1/{len(all_pending)}")
-            else:
-                _log("Waiting for message...")
-                data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
+            _log("Waiting for message...")
+            data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
 
-                if data is None or data.get("timeout"):
-                    continue
-                if data.get("takeover"):
-                    _log("Taken over by another session.")
-                    running = False
-                    break
+            if data is None or data.get("timeout"):
+                continue
+            if data.get("takeover"):
+                _log("Taken over by another session.")
+                running = False
+                break
 
-                replies = data.get("replies", [])
-                if not replies:
-                    continue
+            replies = data.get("replies", [])
+            if not replies:
+                continue
 
             # Build prompt from replies
             has_media = any(
@@ -797,22 +773,12 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             _log(f"Processing: {user_message[:80]}")
             msg_count += 1
 
-            # Run Agent SDK with concurrent /esc monitor
+            # Run Agent SDK with concurrent signal monitor
             try:
                 import threading
-                # Use create_time of the last processed reply as the monitor's
-                # "since" cursor.  This prevents the monitor from re-receiving
-                # the same message that wait_for_reply_inline already returned
-                # (the DB last_checked may not have propagated to the in-memory
-                # session dict yet).
-                _last_reply_time = max(
-                    (r.get("create_time", "0") for r in replies),
-                    default=None,
-                )
-                monitor_since = _last_reply_time or session.get("last_checked") or str(int(time.time() * 1000))
+                monitor_since = session.get("last_checked") or str(int(time.time() * 1000))
                 stop_event = threading.Event()
 
-                # Start monitor in background thread
                 monitor_task = asyncio.get_running_loop().run_in_executor(
                     None, _message_monitor_sync,
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
@@ -820,22 +786,20 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 )
                 sdk_task = asyncio.create_task(run_agent_turn(client, user_message))
 
-                # Wait for SDK to finish or monitor to detect /esc
-                done, pending = await asyncio.wait(
+                done, _ = await asyncio.wait(
                     {sdk_task, monitor_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
                 if monitor_task in done:
-                    # Monitor finished first — /esc, takeover, or WS disconnect
-                    esc_found, buffered = monitor_task.result()
-                    if esc_found:
+                    signal = monitor_task.result()
+
+                    if signal == "esc":
                         _log("Esc received — interrupting SDK")
                         try:
                             await client.interrupt()
                         except Exception as e:
                             _log(f"interrupt error: {e}")
-                        # Wait for SDK to finish after interrupt (it will emit ResultMessage)
                         try:
                             await asyncio.wait_for(sdk_task, timeout=30)
                         except asyncio.TimeoutError:
@@ -844,9 +808,37 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                             await _restart_client()
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(token, chat_id, "Operation cancelled.")
+
+                    elif signal == "handback":
+                        _log("Handback received from monitor — stopping")
+                        try:
+                            await client.interrupt()
+                        except Exception:
+                            pass
+                        try:
+                            await asyncio.wait_for(sdk_task, timeout=10)
+                        except asyncio.TimeoutError:
+                            sdk_task.cancel()
+                        handoff_lifecycle.handoff_end(session_id, model, tool_name="Claude Agent SDK", body="Agent stopped.", silence=False)
+                        running = False
+                        break
+
+                    elif signal == "takeover":
+                        _log("Taken over by another session (from monitor).")
+                        try:
+                            await client.interrupt()
+                        except Exception:
+                            pass
+                        try:
+                            await asyncio.wait_for(sdk_task, timeout=10)
+                        except asyncio.TimeoutError:
+                            sdk_task.cancel()
+                        running = False
+                        break
+
                     else:
-                        # Monitor exited without esc (WS disconnect or takeover).
-                        # Wait for SDK to finish — don't restart monitor, just wait.
+                        # Monitor exited without signal (WS disconnect).
+                        # Wait for SDK to finish normally.
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
                         result, turn_cost = await sdk_task
                         total_cost += turn_cost
@@ -855,14 +847,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                             token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                             send_response_inline(token, chat_id, result)
                             _log("Response sent.")
-                    # Inject buffered messages for next iteration
-                    if buffered:
-                        takeover_msgs = [m for m in buffered if m.get("_takeover")]
-                        if takeover_msgs:
-                            _log("Taken over by another session (from monitor).")
-                            running = False
-                            break
-                        pending_messages.extend(buffered)
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
@@ -875,17 +859,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         send_response_inline(token, chat_id, result)
                         _log("Response sent.")
 
-                    # Collect any messages the monitor saw before we stopped it.
-                    # Don't block long — store ref so next iteration can ensure cleanup.
+                    # Ensure monitor is cleaned up
                     try:
-                        _, buffered = await asyncio.wait_for(monitor_task, timeout=5)
-                        if buffered:
-                            pending_messages.extend(buffered)
-                        monitor_task = None
+                        await asyncio.wait_for(monitor_task, timeout=5)
                     except asyncio.TimeoutError:
-                        _prev_monitor = monitor_task  # Will be awaited at loop top
+                        _prev_monitor = monitor_task
                     except Exception:
-                        monitor_task = None
+                        pass
 
                 # Reset Working card to Done after agent turn completes
                 try:
