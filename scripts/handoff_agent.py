@@ -248,19 +248,36 @@ def _build_agent_options(project_dir, model):
 
 
 async def run_agent_turn(client, prompt):
-    """Send a prompt to the persistent SDK client. Returns (result_text, cost)."""
-    from claude_agent_sdk import ResultMessage
+    """Send a prompt to the persistent SDK client. Returns (result_text, cost).
+
+    Uses receive_messages() instead of receive_response() to handle
+    background tasks (subagents). Waits for ResultMessage AND all pending
+    tasks to complete before returning.
+    """
+    from claude_agent_sdk import ResultMessage, TaskStartedMessage, TaskNotificationMessage
 
     await client.query(prompt)
     result_text = None
     cost = 0.0
-    async for message in client.receive_response():
-        if isinstance(message, ResultMessage):
+    got_result = False
+    pending_tasks = set()
+    async for message in client.receive_messages():
+        if isinstance(message, TaskStartedMessage):
+            pending_tasks.add(message.task_id)
+            _log(f"Task started: {message.task_id}")
+        elif isinstance(message, TaskNotificationMessage):
+            pending_tasks.discard(message.task_id)
+            _log(f"Task done: {message.task_id} ({message.status})")
+        elif isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
             _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
-    # Only use ResultMessage.result — intermediate output is handled by hooks
+            got_result = True
+            if not pending_tasks:
+                break
+        if got_result and not pending_tasks:
+            break
     return result_text, cost
 
 
