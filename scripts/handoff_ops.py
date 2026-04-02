@@ -2013,47 +2013,60 @@ def cmd_agent_spawn(args):
     email = creds.get("email", "")
     open_id = lark_im.lookup_open_id_by_email(token, email) if email else ""
 
-    # Compute workspace ID for the target project dir
-    machine = handoff_config._get_machine_name()
-    folder = project_dir.replace("/", "-").strip("-")
-    workspace_id = f"{machine}-{folder}"
-
-    # Discover existing groups for this workspace
-    groups = find_groups_for_workspace(token, workspace_id, open_id or None)
-
-    chat_id = None
+    chat_id = getattr(args, "chat_id", None)
+    group_name_arg = getattr(args, "group_name", None)
     group_name = None
-    if groups:
-        # Use first available group
-        chat_id = groups[0]["chat_id"]
-        group_name = groups[0]["name"]
-    else:
-        # Create new group
-        worktree = os.path.basename(project_dir)
-        existing_names = [g["name"] for g in groups]
-        chat_id = create_handoff_group(
-            token, open_id, worktree, machine, existing_names,
-            workspace_id=workspace_id,
-        )
-        group_name = f"{worktree}@{machine}"
 
-    # If the group already has an active session, don't spawn a duplicate.
-    try:
-        old_env = os.environ.get("HANDOFF_PROJECT_DIR")
-        os.environ["HANDOFF_PROJECT_DIR"] = project_dir
-        active = handoff_db.get_active_sessions()
-        if old_env:
-            os.environ["HANDOFF_PROJECT_DIR"] = old_env
-        elif "HANDOFF_PROJECT_DIR" in os.environ:
-            del os.environ["HANDOFF_PROJECT_DIR"]
-        for s in active:
-            if s.get("chat_id") == chat_id:
-                _jprint({"error": "agent_already_active",
-                         "chat_id": chat_id, "group_name": group_name,
-                         "session_id": s["session_id"]})
-                return 1
-    except Exception:
-        pass
+    if chat_id:
+        # Explicit chat_id — takeover unconditionally
+        try:
+            info = lark_im.get_chat_info(token, chat_id)
+            group_name = info.get("name", "")
+        except Exception:
+            pass
+    elif group_name_arg:
+        # Search by group name — takeover if found
+        from send_to_group import find_group_by_name
+        match = find_group_by_name(token, group_name_arg, open_id or None)
+        if not match:
+            _jprint({"error": "group_not_found", "group_name": group_name_arg})
+            return 1
+        chat_id = match["chat_id"]
+        group_name = match.get("name", "")
+    else:
+        # Discover workspace groups, pick an idle one or create new
+        machine = handoff_config._get_machine_name()
+        folder = project_dir.replace("/", "-").strip("-")
+        workspace_id = f"{machine}-{folder}"
+        groups = find_groups_for_workspace(token, workspace_id, open_id or None)
+
+        active_chat_ids = set()
+        try:
+            old_env = os.environ.get("HANDOFF_PROJECT_DIR")
+            os.environ["HANDOFF_PROJECT_DIR"] = project_dir
+            for s in handoff_db.get_active_sessions():
+                active_chat_ids.add(s.get("chat_id", ""))
+            if old_env:
+                os.environ["HANDOFF_PROJECT_DIR"] = old_env
+            elif "HANDOFF_PROJECT_DIR" in os.environ:
+                del os.environ["HANDOFF_PROJECT_DIR"]
+        except Exception:
+            pass
+
+        for g in groups:
+            if g["chat_id"] not in active_chat_ids:
+                chat_id = g["chat_id"]
+                group_name = g["name"]
+                break
+
+        if not chat_id:
+            worktree = os.path.basename(project_dir)
+            existing_names = [g["name"] for g in groups]
+            chat_id = create_handoff_group(
+                token, open_id, worktree, machine, existing_names,
+                workspace_id=workspace_id,
+            )
+            group_name = f"{worktree}@{machine}"
 
     # Spawn handoff_agent.py as background process
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2360,6 +2373,8 @@ def build_parser():
 
     s = sub.add_parser("agent-spawn")
     s.add_argument("--project-dir", default=None)
+    s.add_argument("--chat-id", default=None, help="Target group by ID (takeover if active)")
+    s.add_argument("--group-name", default=None, help="Target group by name (takeover if active)")
     s.add_argument("--model", default="claude-opus-4-6")
     s.set_defaults(func=cmd_agent_spawn)
 
