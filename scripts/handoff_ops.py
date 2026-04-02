@@ -2078,7 +2078,10 @@ def cmd_agent_spawn(args):
     log_dir = _AGENT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     slug = _agent_slug(group_name or "temp")
-    log_path = os.path.join(log_dir, f"handoff-agent-{slug}.log")
+    # Include chat_id suffix to avoid log collisions when multiple groups
+    # have the same name (e.g. same project on different machines).
+    chat_suffix = chat_id[-8:] if chat_id else ""
+    log_path = os.path.join(log_dir, f"handoff-agent-{slug}-{chat_suffix}.log")
 
     # Find a Python with claude_agent_sdk installed. sys.executable might be
     # Xcode Python (3.9) when called from Agent SDK Bash tool, which lacks
