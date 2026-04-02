@@ -584,23 +584,29 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             # Use buffered messages from monitor if available, otherwise poll
             if pending_messages:
-                replies = pending_messages
+                all_pending = pending_messages
                 pending_messages = []
                 # Apply same filters as wait_for_reply_inline
                 bot_oid = session.get("bot_open_id", "")
                 op_oid = session.get("operator_open_id", "")
                 guests = session.get("guests") or []
                 m_roles = {g["open_id"]: g.get("role", "guest") for g in guests} if guests else {}
-                replies = wfr_mod.filter_self_bot(replies, bot_oid)
+                all_pending = wfr_mod.filter_self_bot(all_pending, bot_oid)
                 if m_roles:
-                    replies = wfr_mod.filter_by_allowed_senders(replies, op_oid, m_roles)
+                    all_pending = wfr_mod.filter_by_allowed_senders(all_pending, op_oid, m_roles)
                 else:
-                    replies = wfr_mod.filter_by_operator(replies, op_oid)
+                    all_pending = wfr_mod.filter_by_operator(all_pending, op_oid)
                 if session.get("need_mention", False):
-                    replies = wfr_mod.filter_bot_interactions(replies, bot_oid)
-                if not replies:
+                    all_pending = wfr_mod.filter_bot_interactions(all_pending, bot_oid)
+                if not all_pending:
                     continue
-                _log(f"Processing {len(replies)} buffered message(s)")
+                # Process first message now, re-queue the rest so each gets
+                # its own SDK turn (avoids joining N messages into one prompt
+                # where the LLM only addresses the first).
+                replies = [all_pending[0]]
+                if len(all_pending) > 1:
+                    pending_messages.extend(all_pending[1:])
+                _log(f"Processing buffered message 1/{len(all_pending)}")
             else:
                 _log("Waiting for message...")
                 data = wait_for_reply_inline(chat_id, session, resolved_profile, timeout=300)
