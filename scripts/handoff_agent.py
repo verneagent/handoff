@@ -792,9 +792,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 )
 
                 if monitor_task in done:
-                    signal = monitor_task.result()
+                    monitor_signal = monitor_task.result()
 
-                    if signal == "esc":
+                    if monitor_signal == "esc":
                         _log("Esc received — interrupting SDK")
                         try:
                             await client.interrupt()
@@ -809,7 +809,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(token, chat_id, "Operation cancelled.")
 
-                    elif signal == "handback":
+                    elif monitor_signal == "handback":
                         _log("Handback received from monitor — stopping")
                         try:
                             await client.interrupt()
@@ -823,7 +823,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         running = False
                         break
 
-                    elif signal == "takeover":
+                    elif monitor_signal == "takeover":
                         _log("Taken over by another session (from monitor).")
                         try:
                             await client.interrupt()
