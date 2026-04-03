@@ -1960,12 +1960,18 @@ def cmd_agent_list(args):
     daemon_agents = _discover_agents()
     daemon_chat_ids = {a.get("chat_id") for a in daemon_agents}
 
-    # Mark daemon agents
+    # All running processes — used for pid lookup and non-daemon discovery
+    procs = _discover_agent_processes()
+    proc_by_chat = {p["chat_id"]: p for p in procs if "chat_id" in p}
+
+    # Mark daemon agents and attach pid from process list
     for a in daemon_agents:
         a["daemon"] = True
+        proc = proc_by_chat.get(a.get("chat_id"))
+        if proc:
+            a["pid"] = proc["pid"]
 
     # Find non-daemon processes
-    procs = _discover_agent_processes()
     non_daemon = [p for p in procs if p.get("chat_id") not in daemon_chat_ids]
     for p in non_daemon:
         p["daemon"] = False
