@@ -298,17 +298,27 @@ Shows recent log output. Each agent has its own log at `/tmp/handoff/handoff-age
 
 ## Group Rules
 
-Group rules are per-group instructions (like a CLAUDE.md for the group) stored in the Lark group's pinned config card. They persist across sessions and machines.
+Group rules are per-group instructions (like a CLAUDE.md for the group) stored as a key-value map in the Lark group's pinned config card. They persist across sessions and machines.
 
-### Set Rules (`/handoff set-rules`)
+### Add Rule (`/handoff add-rule`)
 
 **Requires active handoff session.**
 
 ```bash
-python3 .claude/skills/handoff/scripts/handoff_ops.py set-rules --rules '<RULES_TEXT>'
+python3 .claude/skills/handoff/scripts/handoff_ops.py add-rule --key '<KEY>' --text '<RULE_TEXT>'
 ```
 
-Sets group-specific rules. These rules are loaded on every session activation and treated with the same authority as CLAUDE.md instructions.
+Adds or updates a rule by key. Returns the full rules map.
+
+### Remove Rule (`/handoff remove-rule`)
+
+**Requires active handoff session.**
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py remove-rule --key '<KEY>'
+```
+
+Removes a rule by key. Returns `{"ok": true, "removed": "...", "rules": {...}}`.
 
 ### Get Rules (`/handoff get-rules`)
 
@@ -318,4 +328,4 @@ Sets group-specific rules. These rules are loaded on every session activation an
 python3 .claude/skills/handoff/scripts/handoff_ops.py get-rules
 ```
 
-Returns `{"ok": true, "rules": "..."}` with the current group rules text.
+Returns `{"ok": true, "rules": {"lang": "回复用中文", "prod": "不要动 prod 分支"}}`.

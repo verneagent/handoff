@@ -416,21 +416,27 @@ python3 scripts/handoff_ops.py set-autoapprove <on|off>
 
 Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
 
-**Rules command**: If the owner sends a message with intent to set group rules, detect flexibly (natural language, any language). Examples: "rules: 回复用中文", "set rules: always reply in English", "群规则：不要动 prod 分支", "rules", "show rules". Two variants:
+**Rules commands**: Group rules are a key-value map (like a per-group CLAUDE.md). Detect flexibly (natural language, any language):
 
-- **Set rules**: Owner provides rules text. Extract the rules content and run:
+- **Add/update rule**: Owner provides a key and rule text. Examples: "add rule lang: 回复用中文", "rule prod: 不要动 prod 分支", "加规则 workflow: 代码改动前先说思路". Extract a short key and the rule text, then:
   ```bash
-  python3 scripts/handoff_ops.py set-rules --rules '<RULES_TEXT>'
+  python3 scripts/handoff_ops.py add-rule --key '<KEY>' --text '<RULE_TEXT>'
   ```
-  Send confirmation to Lark showing the new rules.
+  Send confirmation to Lark showing the added/updated rule.
 
-- **Show rules**: Owner asks to see current rules. Run:
+- **Remove rule**: Owner wants to remove a rule by key. Examples: "remove rule prod", "删规则 lang". Extract the key, then:
+  ```bash
+  python3 scripts/handoff_ops.py remove-rule --key '<KEY>'
+  ```
+  Send confirmation to Lark.
+
+- **Show rules**: Owner asks to see current rules. Examples: "rules", "show rules", "群规则". Run:
   ```bash
   python3 scripts/handoff_ops.py get-rules
   ```
-  Send the rules text to Lark (or "No rules set." if empty).
+  Send the rules to Lark as a formatted list (or "No rules set." if empty).
 
-Rules are persisted in the group's pinned config card and loaded automatically on every future session activation. They function like a per-group CLAUDE.md.
+Rules are persisted in the group's pinned config card and loaded automatically on every future session activation.
 
 **Guest & coowner commands**: The owner can manage a whitelist of members who can interact with the bot. This works in both regular and sidecar mode. Detect these commands flexibly (natural language, any language):
 

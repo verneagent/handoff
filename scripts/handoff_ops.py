@@ -1631,8 +1631,8 @@ def cmd_guest_list(args):
     })
 
 
-def cmd_set_rules(args):
-    """Set group rules (per-group CLAUDE.md equivalent)."""
+def cmd_add_rule(args):
+    """Add or update a group rule by key."""
     sid = _get_session_id()
     if not sid:
         _jprint({"ok": False, "error": "no active session"})
@@ -1642,14 +1642,34 @@ def cmd_set_rules(args):
         _jprint({"ok": False, "error": "session not found"})
         return 1
     chat_id = session["chat_id"]
-    rules = args.rules
     try:
         token = _require_token(_require_credentials())
-        group_config.set_rules(token, chat_id, rules)
+        rules = group_config.add_rule(token, chat_id, args.key, args.text)
     except Exception as e:
-        _jprint({"ok": False, "error": f"failed to save rules: {e}"})
+        _jprint({"ok": False, "error": f"failed to add rule: {e}"})
         return 1
     _jprint({"ok": True, "rules": rules})
+    return 0
+
+
+def cmd_remove_rule(args):
+    """Remove a group rule by key."""
+    sid = _get_session_id()
+    if not sid:
+        _jprint({"ok": False, "error": "no active session"})
+        return 1
+    session = handoff_db.get_session(sid)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
+    chat_id = session["chat_id"]
+    try:
+        token = _require_token(_require_credentials())
+        removed, rules = group_config.remove_rule(token, chat_id, args.key)
+    except Exception as e:
+        _jprint({"ok": False, "error": f"failed to remove rule: {e}"})
+        return 1
+    _jprint({"ok": True, "removed": removed, "rules": rules})
     return 0
 
 
@@ -2419,9 +2439,14 @@ def build_parser():
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
 
-    s = sub.add_parser("set-rules")
-    s.add_argument("--rules", required=True, help="Group rules text")
-    s.set_defaults(func=cmd_set_rules)
+    s = sub.add_parser("add-rule")
+    s.add_argument("--key", required=True, help="Rule key (short identifier)")
+    s.add_argument("--text", required=True, help="Rule text")
+    s.set_defaults(func=cmd_add_rule)
+
+    s = sub.add_parser("remove-rule")
+    s.add_argument("--key", required=True, help="Rule key to remove")
+    s.set_defaults(func=cmd_remove_rule)
 
     s = sub.add_parser("get-rules")
     s.set_defaults(func=cmd_get_rules)

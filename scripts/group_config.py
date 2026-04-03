@@ -31,7 +31,7 @@ DEFAULT_CONFIG = {
     "guests": [],
     "autoapprove": False,
     "filter": "concise",
-    "rules": "",
+    "rules": {},
 }
 
 
@@ -282,13 +282,42 @@ def set_filter(token, chat_id, level):
 
 
 def get_rules(token, chat_id):
-    """Get group rules text."""
+    """Get group rules dict. Returns {key: rule_text, ...}."""
     config = load_config(token, chat_id)
-    return config.get("rules", "")
+    rules = config.get("rules", {})
+    # Migrate legacy string format
+    if isinstance(rules, str):
+        return {"default": rules} if rules else {}
+    return rules
 
 
 def set_rules(token, chat_id, rules):
-    """Set group rules text."""
+    """Replace entire rules dict."""
     config = load_config(token, chat_id)
     config["rules"] = rules
     save_config(token, chat_id, config)
+
+
+def add_rule(token, chat_id, key, text):
+    """Add or update a single rule by key."""
+    config = load_config(token, chat_id)
+    rules = config.get("rules", {})
+    if isinstance(rules, str):
+        rules = {"default": rules} if rules else {}
+    rules[key] = text
+    config["rules"] = rules
+    save_config(token, chat_id, config)
+    return rules
+
+
+def remove_rule(token, chat_id, key):
+    """Remove a rule by key. Returns (removed_text, remaining_rules) or (None, rules)."""
+    config = load_config(token, chat_id)
+    rules = config.get("rules", {})
+    if isinstance(rules, str):
+        rules = {"default": rules} if rules else {}
+    removed = rules.pop(key, None)
+    if removed is not None:
+        config["rules"] = rules
+        save_config(token, chat_id, config)
+    return removed, rules

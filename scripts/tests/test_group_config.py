@@ -76,7 +76,7 @@ class CardBuildParseTest(unittest.TestCase):
             "guests": [{"open_id": "ou_alice", "name": "Alice", "role": "coowner"}],
             "autoapprove": True,
             "filter": "concise",
-            "rules": "Reply in Chinese.",
+            "rules": {"lang": "Reply in Chinese."},
         }
         card = group_config._build_config_card(config)
 
@@ -90,7 +90,7 @@ class CardBuildParseTest(unittest.TestCase):
 
     def test_empty_config(self):
         """Empty/default config round-trips."""
-        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": ""}
+        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": {}}
         card = group_config._build_config_card(config)
         msg_item = {"body": {"content": json.dumps(card)}}
         parsed = group_config._parse_config_from_card(msg_item)
@@ -123,7 +123,7 @@ class CacheTest(_DbTestCase):
 
     def test_set_and_get(self):
         """Set then get returns correct data."""
-        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": ""}
+        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": {}}
         handoff_db.set_cached_group_config("chat_1", config, "msg_pin_1")
         result = handoff_db.get_cached_group_config("chat_1")
         self.assertIsNotNone(result)
@@ -156,7 +156,7 @@ class LoadConfigTest(_DbTestCase):
 
     def test_returns_cached_when_fresh(self):
         """Returns cache without hitting Lark when cache is fresh."""
-        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": ""}
+        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": {}}
         handoff_db.set_cached_group_config("chat_c1", config, "pin_1")
 
         # Should not call Lark at all
@@ -167,7 +167,7 @@ class LoadConfigTest(_DbTestCase):
 
     def test_fetches_from_lark_when_stale(self):
         """Fetches from Lark when cache is expired."""
-        config = {"guests": [], "autoapprove": False, "filter": "verbose", "rules": ""}
+        config = {"guests": [], "autoapprove": False, "filter": "verbose", "rules": {}}
         # Set cache with old timestamp
         handoff_db.set_cached_group_config("chat_c2", config, "pin_1")
         # Manually make it stale
@@ -179,17 +179,17 @@ class LoadConfigTest(_DbTestCase):
         conn.commit()
         conn.close()
 
-        new_config = {"guests": [{"open_id": "ou_x", "name": "X"}], "autoapprove": True, "filter": "concise", "rules": ""}
+        new_config = {"guests": [{"open_id": "ou_x", "name": "X"}], "autoapprove": True, "filter": "concise", "rules": {}}
         with mock.patch.object(group_config, "_find_config_pin", return_value=("pin_2", new_config)):
             result = group_config.load_config("fake_token", "chat_c2")
         self.assertEqual(result, new_config)
 
     def test_force_bypasses_cache(self):
         """force=True always fetches from Lark."""
-        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": ""}
+        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": {}}
         handoff_db.set_cached_group_config("chat_c3", config, "pin_1")
 
-        new_config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": "test"}
+        new_config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": {"test": "test rule"}}
         with mock.patch.object(group_config, "_find_config_pin", return_value=("pin_2", new_config)):
             result = group_config.load_config("fake_token", "chat_c3", force=True)
         self.assertEqual(result, new_config)
@@ -201,7 +201,7 @@ class LoadConfigTest(_DbTestCase):
         self.assertEqual(result["guests"], [])
         self.assertFalse(result["autoapprove"])
         self.assertEqual(result["filter"], "concise")
-        self.assertEqual(result["rules"], "")
+        self.assertEqual(result["rules"], {})
 
 
 class SaveConfigTest(_DbTestCase):
@@ -209,7 +209,7 @@ class SaveConfigTest(_DbTestCase):
 
     def test_creates_new_card_when_none_exists(self):
         """Creates a new pinned card when no existing one found."""
-        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": ""}
+        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": {}}
         with mock.patch.object(group_config, "_find_config_pin", return_value=(None, None)), \
              mock.patch.object(group_config, "_create_config_card", return_value="new_msg_1") as mock_create:
             msg_id = group_config.save_config("token", "chat_s1", config)
@@ -224,7 +224,7 @@ class SaveConfigTest(_DbTestCase):
     def test_updates_existing_card(self):
         """Updates existing card when pin_message_id is cached."""
         handoff_db.set_cached_group_config("chat_s2", {"filter": "verbose"}, "existing_pin")
-        config = {"guests": [], "autoapprove": True, "filter": "concise", "rules": ""}
+        config = {"guests": [], "autoapprove": True, "filter": "concise", "rules": {}}
         with mock.patch.object(group_config, "_update_config_card", return_value="existing_pin") as mock_update:
             msg_id = group_config.save_config("token", "chat_s2", config)
         mock_update.assert_called_once_with("token", "chat_s2", "existing_pin", config)
@@ -247,7 +247,7 @@ class PatchFallbackTest(_DbTestCase):
         mock_lark.send_message.return_value = "new_msg_id"
         mock_lark.create_pin.return_value = {"message_id": "new_msg_id"}
 
-        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": ""}
+        config = {"guests": [], "autoapprove": False, "filter": "concise", "rules": {}}
         result = group_config._update_config_card("token", "chat_f1", "old_pin", config)
 
         self.assertEqual(result, "new_msg_id")
@@ -295,11 +295,44 @@ class ConvenienceHelpersTest(_DbTestCase):
         group_config.set_filter("t", "c", "verbose")
         self.assertEqual(self._stored_config["filter"], "verbose")
 
-    def test_get_set_rules(self):
+    def test_get_rules_empty(self):
         self._enter_mock_load_save()
-        self.assertEqual(group_config.get_rules("t", "c"), "")
-        group_config.set_rules("t", "c", "Always reply in English")
-        self.assertEqual(self._stored_config["rules"], "Always reply in English")
+        self.assertEqual(group_config.get_rules("t", "c"), {})
+
+    def test_add_rule(self):
+        self._enter_mock_load_save()
+        rules = group_config.add_rule("t", "c", "lang", "Reply in Chinese")
+        self.assertEqual(rules, {"lang": "Reply in Chinese"})
+        rules = group_config.add_rule("t", "c", "prod", "Don't touch prod")
+        self.assertEqual(rules, {"lang": "Reply in Chinese", "prod": "Don't touch prod"})
+
+    def test_remove_rule(self):
+        self._enter_mock_load_save()
+        group_config.add_rule("t", "c", "lang", "Reply in Chinese")
+        group_config.add_rule("t", "c", "prod", "Don't touch prod")
+        removed, remaining = group_config.remove_rule("t", "c", "lang")
+        self.assertEqual(removed, "Reply in Chinese")
+        self.assertEqual(remaining, {"prod": "Don't touch prod"})
+
+    def test_remove_rule_nonexistent(self):
+        self._enter_mock_load_save()
+        removed, remaining = group_config.remove_rule("t", "c", "nope")
+        self.assertIsNone(removed)
+        self.assertEqual(remaining, {})
+
+    def test_legacy_string_migration(self):
+        """String rules are migrated to dict on read."""
+        self._enter_mock_load_save()
+        self._stored_config["rules"] = "old string rules"
+        rules = group_config.get_rules("t", "c")
+        self.assertEqual(rules, {"default": "old string rules"})
+
+    def test_add_rule_migrates_string(self):
+        """add_rule migrates legacy string format."""
+        self._enter_mock_load_save()
+        self._stored_config["rules"] = "old rule"
+        rules = group_config.add_rule("t", "c", "new", "new rule")
+        self.assertEqual(rules, {"default": "old rule", "new": "new rule"})
 
     def test_add_remove_guests(self):
         self._enter_mock_load_save()
@@ -344,7 +377,7 @@ class FindConfigPinTest(unittest.TestCase):
     @mock.patch("group_config.lark_im")
     def test_finds_config_card(self, mock_lark):
         """Finds the config card among multiple pins."""
-        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": "test"}
+        config = {"guests": [], "autoapprove": True, "filter": "verbose", "rules": {"test": "test rule"}}
         card = group_config._build_config_card(config)
 
         mock_lark.list_pins.return_value = [

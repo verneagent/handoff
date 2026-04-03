@@ -286,7 +286,7 @@ def main():
             "session_id": session_id,
             "project_dir": project_dir,
         }
-        rules = gc.get("rules", "")
+        rules = gc.get("rules", {})
         if rules:
             result["rules"] = rules
         _jprint(result)
