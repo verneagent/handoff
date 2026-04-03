@@ -296,36 +296,36 @@ python3 .claude/skills/handoff/scripts/handoff_ops.py agent-log --name '<NAME>' 
 
 Shows recent log output. Each agent has its own log at `/tmp/handoff/handoff-agent-<name>.log`.
 
-## Group Rules
+## Group Norms (群规)
 
-Group rules are per-group instructions (like a CLAUDE.md for the group) stored as a key-value map in the Lark group's pinned config card. They persist across sessions and machines.
+Group norms are per-group instructions (like a CLAUDE.md for the group) stored as a key-value map in the Lark group's pinned config card. They persist across sessions and machines. Triggered by "群规", "group norm", or "gnorm".
 
-### Add Rule (`/handoff add-rule`)
+### Add Norm (`/handoff add-norm`)
 
 **Requires active handoff session.**
 
 ```bash
-python3 .claude/skills/handoff/scripts/handoff_ops.py add-rule --key '<KEY>' --text '<RULE_TEXT>'
+python3 .claude/skills/handoff/scripts/handoff_ops.py add-norm --key '<KEY>' --text '<RULE_TEXT>'
 ```
 
 Adds or updates a rule by key. Returns the full rules map.
 
-### Remove Rule (`/handoff remove-rule`)
+### Remove Norm (`/handoff remove-norm`)
 
 **Requires active handoff session.**
 
 ```bash
-python3 .claude/skills/handoff/scripts/handoff_ops.py remove-rule --key '<KEY>'
+python3 .claude/skills/handoff/scripts/handoff_ops.py remove-norm --key '<KEY>'
 ```
 
 Removes a rule by key. Returns `{"ok": true, "removed": "...", "rules": {...}}`.
 
-### Get Rules (`/handoff get-rules`)
+### Get Norms (`/handoff get-norms`)
 
 **Requires active handoff session.**
 
 ```bash
-python3 .claude/skills/handoff/scripts/handoff_ops.py get-rules
+python3 .claude/skills/handoff/scripts/handoff_ops.py get-norms
 ```
 
 Returns `{"ok": true, "rules": {"lang": "回复用中文", "prod": "不要动 prod 分支"}}`.

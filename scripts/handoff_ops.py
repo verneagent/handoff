@@ -1631,7 +1631,7 @@ def cmd_guest_list(args):
     })
 
 
-def cmd_add_rule(args):
+def cmd_add_norm(args):
     """Add or update a group rule by key."""
     sid = _get_session_id()
     if not sid:
@@ -1652,7 +1652,7 @@ def cmd_add_rule(args):
     return 0
 
 
-def cmd_remove_rule(args):
+def cmd_remove_norm(args):
     """Remove a group rule by key."""
     sid = _get_session_id()
     if not sid:
@@ -1673,7 +1673,7 @@ def cmd_remove_rule(args):
     return 0
 
 
-def cmd_get_rules(args):
+def cmd_get_norms(args):
     """Get group rules."""
     sid = _get_session_id()
     if not sid:
@@ -2439,17 +2439,17 @@ def build_parser():
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
 
-    s = sub.add_parser("add-rule")
+    s = sub.add_parser("add-norm")
     s.add_argument("--key", required=True, help="Rule key (short identifier)")
     s.add_argument("--text", required=True, help="Rule text")
-    s.set_defaults(func=cmd_add_rule)
+    s.set_defaults(func=cmd_add_norm)
 
-    s = sub.add_parser("remove-rule")
+    s = sub.add_parser("remove-norm")
     s.add_argument("--key", required=True, help="Rule key to remove")
-    s.set_defaults(func=cmd_remove_rule)
+    s.set_defaults(func=cmd_remove_norm)
 
-    s = sub.add_parser("get-rules")
-    s.set_defaults(func=cmd_get_rules)
+    s = sub.add_parser("get-norms")
+    s.set_defaults(func=cmd_get_norms)
 
     s = sub.add_parser("profile-list")
     s.set_defaults(func=cmd_profile_list)

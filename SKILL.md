@@ -416,23 +416,23 @@ python3 scripts/handoff_ops.py set-autoapprove <on|off>
 
 Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
 
-**群规 (group rules) commands**: Group rules are a key-value map (like a per-group CLAUDE.md). **Only trigger on "群规" keyword** — do NOT trigger on generic words like "rule", "rules", or "规则" alone (those may refer to cursor rules, inscribe, or other skill instructions).
+**群规 / group norm commands**: Group norms are a key-value map (like a per-group CLAUDE.md). **Only trigger on "群规", "group norm", or "gnorm"** — do NOT trigger on generic words like "rule", "rules", or "规则" alone (those may refer to cursor rules, inscribe, or other skill instructions).
 
-- **Add/update**: "群规 lang: 回复用中文", "群规 prod: 不要动 prod 分支". Extract the key (first word after 群规) and the rule text (after the colon/space), then:
+- **Add/update**: "群规 lang: 回复用中文", "gnorm prod: don't touch prod", "group norm workflow: explain before coding". Extract the key (first word after the trigger) and the text (after the colon/space), then:
   ```bash
-  python3 scripts/handoff_ops.py add-rule --key '<KEY>' --text '<RULE_TEXT>'
+  python3 scripts/handoff_ops.py add-norm --key '<KEY>' --text '<RULE_TEXT>'
   ```
   Send confirmation to Lark showing the added/updated rule.
 
-- **Remove**: "删群规 prod", "群规删 lang". Extract the key, then:
+- **Remove**: "删群规 prod", "群规删 lang", "gnorm remove prod". Extract the key, then:
   ```bash
-  python3 scripts/handoff_ops.py remove-rule --key '<KEY>'
+  python3 scripts/handoff_ops.py remove-norm --key '<KEY>'
   ```
   Send confirmation to Lark.
 
-- **Show all**: "群规" (alone, no key/text). Run:
+- **Show all**: "群规", "gnorm", or "group norms" (alone, no key/text). Run:
   ```bash
-  python3 scripts/handoff_ops.py get-rules
+  python3 scripts/handoff_ops.py get-norms
   ```
   Send the rules to Lark as a formatted list (or "No rules set." if empty).
 
