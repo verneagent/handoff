@@ -1906,13 +1906,92 @@ def _resolve_agent(name, agents=None):
     return None
 
 
+def _discover_agent_processes():
+    """Scan running processes for handoff_agent.py instances.
+
+    Returns list of dicts with pid, chat_id, project_dir, model, profile.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ps", "axo", "pid,command"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return []
+    except Exception:
+        return []
+
+    procs = []
+    for line in result.stdout.splitlines():
+        if "handoff_agent.py" not in line or "grep" in line:
+            continue
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        cmd = parts[1]
+        # Parse args from command line
+        info = {"pid": pid}
+        tokens = cmd.split()
+        for i, tok in enumerate(tokens):
+            if tok == "--chat-id" and i + 1 < len(tokens):
+                info["chat_id"] = tokens[i + 1]
+            elif tok == "--project-dir" and i + 1 < len(tokens):
+                info["project_dir"] = tokens[i + 1]
+            elif tok == "--model" and i + 1 < len(tokens):
+                info["model"] = tokens[i + 1]
+            elif tok == "--profile" and i + 1 < len(tokens):
+                info["profile"] = tokens[i + 1]
+        if "chat_id" in info:
+            procs.append(info)
+    return procs
+
+
 def cmd_agent_list(args):
-    """List all installed launchd agents."""
+    """List all agents: daemon (launchd) and live processes."""
     if sys.platform != "darwin":
         _jprint({"error": "Agent management is macOS only"})
         return 1
-    agents = _discover_agents()
-    _jprint({"agents": agents, "count": len(agents)})
+
+    daemon_agents = _discover_agents()
+    daemon_chat_ids = {a.get("chat_id") for a in daemon_agents}
+
+    # Mark daemon agents
+    for a in daemon_agents:
+        a["daemon"] = True
+
+    # Find non-daemon processes
+    procs = _discover_agent_processes()
+    non_daemon = [p for p in procs if p.get("chat_id") not in daemon_chat_ids]
+    for p in non_daemon:
+        p["daemon"] = False
+        p["running"] = True
+
+    all_agents = daemon_agents + non_daemon
+
+    # Resolve chat names via Lark API (best-effort)
+    chat_ids = [a["chat_id"] for a in all_agents if "chat_id" in a]
+    if chat_ids:
+        try:
+            creds = _require_credentials()
+            token = _require_token(creds)
+            for a in all_agents:
+                cid = a.get("chat_id", "")
+                if not cid:
+                    continue
+                try:
+                    info = lark_im.get_chat_info(token, cid)
+                    a["chat_name"] = info.get("name", "")
+                except Exception:
+                    pass
+        except Exception:
+            pass  # No credentials — skip name resolution
+
+    _jprint({"agents": all_agents, "count": len(all_agents)})
 
 
 def cmd_agent_install(args):
