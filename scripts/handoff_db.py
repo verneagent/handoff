@@ -139,6 +139,14 @@ def _get_db():
             ")"
         )
         conn.execute(
+            "CREATE TABLE IF NOT EXISTS group_config_cache ("
+            "  chat_id TEXT NOT NULL PRIMARY KEY,"
+            "  config_json TEXT NOT NULL DEFAULT '{}',"
+            "  pin_message_id TEXT NOT NULL DEFAULT '',"
+            "  last_synced INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS working_state ("
             "  session_id TEXT NOT NULL PRIMARY KEY,"
             "  message_id TEXT NOT NULL,"
@@ -627,6 +635,67 @@ def get_member_roles(session_id):
     """
     guests = get_guests(session_id)
     return {g["open_id"]: g.get("role", "guest") for g in guests}
+
+
+# ---------------------------------------------------------------------------
+# Group config cache (backed by Lark pinned card, cached locally)
+# ---------------------------------------------------------------------------
+
+
+def get_cached_group_config(chat_id):
+    """Get cached group config. Returns (config_dict, pin_message_id, last_synced) or None."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT config_json, pin_message_id, last_synced"
+            " FROM group_config_cache WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            config = json.loads(row[0] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            config = {}
+        return config, row[1] or "", row[2] or 0
+    finally:
+        conn.close()
+
+
+def set_cached_group_config(chat_id, config, pin_message_id):
+    """Write group config to local cache."""
+    conn = _get_db()
+    try:
+        conn.execute(
+            "INSERT INTO group_config_cache (chat_id, config_json, pin_message_id, last_synced)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET"
+            "  config_json = ?, pin_message_id = ?, last_synced = ?",
+            (
+                chat_id,
+                json.dumps(config, ensure_ascii=False),
+                pin_message_id,
+                int(time.time()),
+                json.dumps(config, ensure_ascii=False),
+                pin_message_id,
+                int(time.time()),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_cached_group_config(chat_id):
+    """Remove group config from local cache."""
+    conn = _get_db()
+    try:
+        conn.execute(
+            "DELETE FROM group_config_cache WHERE chat_id = ?", (chat_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def set_working_message(session_id, message_id):

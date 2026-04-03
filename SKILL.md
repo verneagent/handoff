@@ -316,7 +316,7 @@ Pass `--group-name '<GROUP_NAME>'` when the user provides a specific group name 
 
 - **`"status": "hooks_pending"`** — hooks were just installed but not yet loaded. **Stop immediately.** Tell the user: "Please exit and restart Claude Code, then run `/handoff`." Do NOT proceed. Do NOT explain technical details.
 - **`"status": "restart_required"`** — session env vars are missing (hooks haven't run yet). **Stop immediately.** Tell the user: "Please exit and restart Claude Code, then run `/handoff` again." Do NOT attempt to work around this or generate the missing values manually. Do NOT explain technical details.
-- **`"status": "ready"`** — activation complete. Extract `chat_id`, `session_id`, `project_dir`. Proceed to Step E.
+- **`"status": "ready"`** — activation complete. Extract `chat_id`, `session_id`, `project_dir`. If the response contains a `"rules"` field, these are **group-specific rules** (like a per-group CLAUDE.md). You MUST follow them for the entire handoff session — treat them with the same authority as CLAUDE.md instructions. Proceed to Step E.
 - **`"status": "already_active"`** — this session already has a live handoff.
   - If the user asked for `no ask` / `auto`: continue with the current chat (Step E).
   - Otherwise: ask — continue current chat, or re-run with `--mode new` to get a fresh group.
@@ -391,7 +391,7 @@ python3 scripts/wait_for_reply.py
 - If **the user interrupts** (Esc or Ctrl+C — the Bash tool call is rejected): ask the user "End handoff?" using **AskUserQuestion** (this is the one place AskUserQuestion is allowed during the loop, since the user is at the CLI). If confirmed, exit Handoff mode cleanly — send "Handing back to CLI." to Lark, then deactivate, restore notifications, stop the loop. If declined, re-enter Step 1 (call `wait_for_reply.py` again).
 - If `takeover`: another session has taken over. Exit Handoff mode silently (deactivate, restore notifications). Print "Handoff taken over by another session." locally. Do NOT send a Lark message (the new session will handle that).
 - If `timeout`: no reply within timeout. Re-invoke `wait_for_reply.py` immediately. This is normal idle behavior.
-- If replies found: concatenate all reply texts as the user's message. Proceed to Step 2.
+- If replies found: concatenate all reply texts as the user's message. **Also check the `mentions` array in each reply** — it contains `{"key": "@_user_1", "id": "ou_xxx", "name": "Lucy"}` for each @ mentioned user. The text field uses placeholders like `@_user_1` for mentions — resolve them using the `mentions` array to get actual names and `open_id`s. This is critical for guest/coowner commands. Proceed to Step 2.
 
 ### Step 2: Check for commands
 
@@ -418,13 +418,13 @@ Send a confirmation to Lark. When autoapprove is **on**, all permission requests
 
 **Guest & coowner commands**: The owner can manage a whitelist of members who can interact with the bot. This works in both regular and sidecar mode. Detect these commands flexibly (natural language, any language):
 
-- **Add guests**: Owner mentions users with intent to grant guest access. Examples: "add @jack @alice as guest", "@jack 和 @alice 可以和你对话", "let @bob talk to you". Extract `open_id` and `name` from the `mentions` array in the message, then:
+- **Add guests**: Owner mentions users with intent to grant guest access. Examples: "add @jack @alice as guest", "@jack 和 @alice 可以和你对话", "let @bob talk to you". The text will contain placeholders like `@_user_1` — look up the actual `open_id` and `name` from the reply's `mentions` array (filter out the bot's own mention). Then:
   ```bash
   python3 scripts/handoff_ops.py guest-add --guests-json '[{"open_id":"ou_xxx","name":"Jack"},{"open_id":"ou_yyy","name":"Alice"}]'
   ```
   Send confirmation to Lark listing who was added.
 
-- **Add coowners**: Owner mentions users with intent to grant coowner access. Examples: "add @alice as coowner", "@alice 是 coowner", "make @bob a coowner". Extract `open_id` and `name` from mentions, then:
+- **Add coowners**: Owner mentions users with intent to grant coowner access. Examples: "add @alice as coowner", "@alice 是 coowner", "make @bob a coowner". Same as above — extract `open_id` and `name` from the reply's `mentions` array (not from text). Then:
   ```bash
   python3 scripts/handoff_ops.py guest-add --role coowner --guests-json '[{"open_id":"ou_xxx","name":"Alice"}]'
   ```
@@ -605,7 +605,7 @@ python3 scripts/send_and_wait.py '<your response>'
 - If `takeover`: exit Handoff mode silently (same as Step 1).
 - If `timeout`: the message was already sent. Call `wait_for_reply.py` to resume waiting (no re-send needed).
 - If **the user interrupts** (Esc/Ctrl+C): the message was already sent. Ask "End handoff?" same as Step 1.
-- If replies found: concatenate all reply texts as the user's message. Go to Step 2.
+- If replies found: concatenate all reply texts as the user's message. **Check `mentions` arrays** — text uses placeholders like `@_user_1` for @ mentions; resolve them via each reply's `mentions` array (`key`, `id`/open_id, `name`). Go to Step 2.
 
 **Format options** (same flags as `send_to_group.py`):
 - **Markdown card** (default, no `--card`): Use for ALL conversational responses — answers, explanations, questions, confirmations, analysis results. This is the default.

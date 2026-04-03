@@ -483,6 +483,72 @@ def update_card_message(token, message_id, card):
         raise RuntimeError(f"Failed to update message: {data}")
 
 
+def create_pin(token, message_id):
+    """Pin a message in a chat. Returns pin info dict."""
+    url = f"{BASE_URL}/im/v1/pins"
+    payload = {"message_id": message_id}
+    data = _im_post(url, token, payload)
+    if data.get("code") != 0:
+        raise RuntimeError(f"Failed to create pin: {data}")
+    return data.get("data", {}).get("pin", {})
+
+
+def list_pins(token, chat_id):
+    """List all pinned messages in a chat. Returns list of pin dicts.
+
+    Each pin dict has: message_id, chat_id, operator_id, create_time.
+    Handles pagination automatically.
+    """
+    pins = []
+    page_token = ""
+    while True:
+        params = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "page_size": 50,
+            **({"page_token": page_token} if page_token else {}),
+        })
+        url = f"{BASE_URL}/im/v1/pins?{params}"
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            try:
+                data = json.loads(e.read())
+            except Exception:
+                raise e
+        if data.get("code") != 0:
+            raise RuntimeError(f"Failed to list pins: {data}")
+        items = data.get("data", {}).get("items", [])
+        pins.extend(items)
+        page_token = data.get("data", {}).get("page_token", "")
+        if not data.get("data", {}).get("has_more") or not page_token:
+            break
+    return pins
+
+
+def delete_pin(token, message_id):
+    """Unpin a message. Does not delete the message itself."""
+    url = f"{BASE_URL}/im/v1/pins/{message_id}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read())
+        except Exception:
+            raise e
+    if data.get("code") != 0:
+        raise RuntimeError(f"Failed to delete pin: {data}")
+
+
 def delete_message(token, message_id):
     """Delete a bot-sent message from a chat."""
     url = f"{BASE_URL}/im/v1/messages/{message_id}"

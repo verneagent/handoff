@@ -64,6 +64,7 @@ import time
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
+import group_config
 import handoff_config
 import handoff_db
 import handoff_lifecycle
@@ -746,8 +747,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if re.match(r"(auto\s*approve|autoapprove)\s+(on|off)", msg_lower):
                 enabled = "on" in msg_lower.split()[-1]
                 try:
-                    handoff_db.set_autoapprove(chat_id, enabled)
                     token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    group_config.set_autoapprove(token, chat_id, enabled)
+                    handoff_db.set_autoapprove(chat_id, enabled)
                     send_response_inline(token, chat_id,
                         f"Auto-approve **{'enabled' if enabled else 'disabled'}**.")
                 except Exception as e:

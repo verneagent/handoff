@@ -29,6 +29,7 @@ import time
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
+import group_config
 import handoff_config
 import handoff_db
 import lark_im
@@ -42,6 +43,32 @@ from send_to_group import (
 
 def _jprint(obj):
     print(json.dumps(obj, ensure_ascii=True))
+
+
+def _sync_group_config(token, chat_id, session_id):
+    """Load group config from Lark pinned card and sync to local DB.
+
+    Called on session activation so that readers (wait_for_reply, hooks, etc.)
+    can read config from the session dict without hitting Lark.
+
+    Returns the config dict (or empty dict on failure).
+    """
+    try:
+        config = group_config.load_config(token, chat_id, force=True)
+        # Sync guests to sessions table
+        guests = config.get("guests", [])
+        if guests:
+            handoff_db.set_guests(session_id, guests)
+        # Sync chat_preferences
+        msg_filter = config.get("filter")
+        if msg_filter:
+            handoff_db.set_message_filter(chat_id, msg_filter)
+        autoapprove = config.get("autoapprove", False)
+        handoff_db.set_autoapprove(chat_id, autoapprove)
+        return config
+    except Exception as e:
+        print(f"[enter_handoff] group config sync failed: {e}", file=sys.stderr)
+        return {}
 
 
 _RESOLVE_LOG = os.path.join(
@@ -251,13 +278,18 @@ def main():
             need_mention=need_mention,
             config_profile=profile,
         )
+        gc = _sync_group_config(token, chat_id_to_activate, session_id)
         _persist_profile_env(profile)
-        _jprint({
+        result = {
             "status": "ready",
             "chat_id": chat_id_to_activate,
             "session_id": session_id,
             "project_dir": project_dir,
-        })
+        }
+        rules = gc.get("rules", "")
+        if rules:
+            result["rules"] = rules
+        _jprint(result)
         return 0
 
     # ── Step B: discover ──────────────────────────────────────────────────
@@ -363,14 +395,19 @@ def main():
         need_mention=need_mention,
         config_profile=profile,
     )
+    gc = _sync_group_config(token, chat_id_to_activate, session_id)
     _persist_profile_env(profile)
 
-    _jprint({
+    result = {
         "status": "ready",
         "chat_id": chat_id_to_activate,
         "session_id": session_id,
         "project_dir": project_dir,
-    })
+    }
+    rules = gc.get("rules", "")
+    if rules:
+        result["rules"] = rules
+    _jprint(result)
     return 0
 
 

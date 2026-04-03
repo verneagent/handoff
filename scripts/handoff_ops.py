@@ -17,6 +17,7 @@ import urllib.request
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
+import group_config
 import handoff_config
 import handoff_db
 import handoff_worker
@@ -566,7 +567,15 @@ def cmd_set_filter(args):
     if level not in handoff_db.MESSAGE_FILTER_LEVELS:
         _jprint({"ok": False, "error": f"invalid level: {level}"})
         return 1
-    handoff_db.set_message_filter(session["chat_id"], level)
+    chat_id = session["chat_id"]
+    # Write to Lark pinned card (source of truth)
+    try:
+        token = _require_token(_require_credentials())
+        group_config.set_filter(token, chat_id, level)
+    except Exception as e:
+        print(f"[handoff] group_config sync failed: {e}", file=sys.stderr)
+    # Write to local DB (session-local cache for readers)
+    handoff_db.set_message_filter(chat_id, level)
     _jprint({"ok": True, "level": level})
     return 0
 
@@ -581,7 +590,15 @@ def cmd_set_autoapprove(args):
         _jprint({"ok": False, "error": "session not found"})
         return 1
     enabled = args.enabled.lower() in ("on", "true", "1", "yes")
-    handoff_db.set_autoapprove(session["chat_id"], enabled)
+    chat_id = session["chat_id"]
+    # Write to Lark pinned card (source of truth)
+    try:
+        token = _require_token(_require_credentials())
+        group_config.set_autoapprove(token, chat_id, enabled)
+    except Exception as e:
+        print(f"[handoff] group_config sync failed: {e}", file=sys.stderr)
+    # Write to local DB (session-local cache for readers)
+    handoff_db.set_autoapprove(chat_id, enabled)
     _jprint({"ok": True, "autoapprove": enabled})
     return 0
 
@@ -1528,6 +1545,10 @@ def cmd_guest_add(args):
     if not session_id:
         _jprint({"ok": False, "error": "HANDOFF_SESSION_ID not set"})
         return 1
+    session = handoff_db.get_session(session_id)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
     try:
         new_guests = json.loads(args.guests_json)
     except json.JSONDecodeError as e:
@@ -1539,7 +1560,17 @@ def cmd_guest_add(args):
     role = getattr(args, "role", "guest") or "guest"
     for g in new_guests:
         g["role"] = role
-    added, current = handoff_db.add_guests(session_id, new_guests)
+    # Write to Lark pinned card (source of truth)
+    chat_id = session["chat_id"]
+    try:
+        token = _require_token(_require_credentials())
+        added, current = group_config.add_guests(token, chat_id, new_guests)
+    except Exception as e:
+        print(f"[handoff] group_config sync failed: {e}", file=sys.stderr)
+        added, current = handoff_db.add_guests(session_id, new_guests)
+    else:
+        # Sync to local DB for session readers
+        handoff_db.set_guests(session_id, current)
     _jprint({
         "ok": True,
         "added": added,
@@ -1556,6 +1587,10 @@ def cmd_guest_remove(args):
     if not session_id:
         _jprint({"ok": False, "error": "HANDOFF_SESSION_ID not set"})
         return 1
+    session = handoff_db.get_session(session_id)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
     try:
         open_ids = json.loads(args.open_ids_json)
     except json.JSONDecodeError as e:
@@ -1564,7 +1599,17 @@ def cmd_guest_remove(args):
     if not open_ids:
         _jprint({"ok": False, "error": "no open_ids provided"})
         return 1
-    removed, current = handoff_db.remove_guests(session_id, open_ids)
+    # Write to Lark pinned card (source of truth)
+    chat_id = session["chat_id"]
+    try:
+        token = _require_token(_require_credentials())
+        removed, current = group_config.remove_guests(token, chat_id, open_ids)
+    except Exception as e:
+        print(f"[handoff] group_config sync failed: {e}", file=sys.stderr)
+        removed, current = handoff_db.remove_guests(session_id, open_ids)
+    else:
+        # Sync to local DB for session readers
+        handoff_db.set_guests(session_id, current)
     _jprint({
         "ok": True,
         "removed": removed,
@@ -1584,6 +1629,49 @@ def cmd_guest_list(args):
         "guests": guests,
         "count": len(guests),
     })
+
+
+def cmd_set_rules(args):
+    """Set group rules (per-group CLAUDE.md equivalent)."""
+    sid = _get_session_id()
+    if not sid:
+        _jprint({"ok": False, "error": "no active session"})
+        return 1
+    session = handoff_db.get_session(sid)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
+    chat_id = session["chat_id"]
+    rules = args.rules
+    try:
+        token = _require_token(_require_credentials())
+        group_config.set_rules(token, chat_id, rules)
+    except Exception as e:
+        _jprint({"ok": False, "error": f"failed to save rules: {e}"})
+        return 1
+    _jprint({"ok": True, "rules": rules})
+    return 0
+
+
+def cmd_get_rules(args):
+    """Get group rules."""
+    sid = _get_session_id()
+    if not sid:
+        _jprint({"ok": False, "error": "no active session"})
+        return 1
+    session = handoff_db.get_session(sid)
+    if not session:
+        _jprint({"ok": False, "error": "session not found"})
+        return 1
+    chat_id = session["chat_id"]
+    try:
+        token = _require_token(_require_credentials())
+        rules = group_config.get_rules(token, chat_id)
+    except Exception as e:
+        _jprint({"ok": False, "error": f"failed to get rules: {e}"})
+        return 1
+    _jprint({"ok": True, "rules": rules})
+    return 0
 
 
 def cmd_profile_list(args):
@@ -2330,6 +2418,13 @@ def build_parser():
 
     s = sub.add_parser("guest-list")
     s.set_defaults(func=cmd_guest_list)
+
+    s = sub.add_parser("set-rules")
+    s.add_argument("--rules", required=True, help="Group rules text")
+    s.set_defaults(func=cmd_set_rules)
+
+    s = sub.add_parser("get-rules")
+    s.set_defaults(func=cmd_get_rules)
 
     s = sub.add_parser("profile-list")
     s.set_defaults(func=cmd_profile_list)

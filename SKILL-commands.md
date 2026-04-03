@@ -295,3 +295,27 @@ python3 .claude/skills/handoff/scripts/handoff_ops.py agent-log --name '<NAME>' 
 ```
 
 Shows recent log output. Each agent has its own log at `/tmp/handoff/handoff-agent-<name>.log`.
+
+## Group Rules
+
+Group rules are per-group instructions (like a CLAUDE.md for the group) stored in the Lark group's pinned config card. They persist across sessions and machines.
+
+### Set Rules (`/handoff set-rules`)
+
+**Requires active handoff session.**
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py set-rules --rules '<RULES_TEXT>'
+```
+
+Sets group-specific rules. These rules are loaded on every session activation and treated with the same authority as CLAUDE.md instructions.
+
+### Get Rules (`/handoff get-rules`)
+
+**Requires active handoff session.**
+
+```bash
+python3 .claude/skills/handoff/scripts/handoff_ops.py get-rules
+```
+
+Returns `{"ok": true, "rules": "..."}` with the current group rules text.
