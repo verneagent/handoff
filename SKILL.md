@@ -416,6 +416,22 @@ python3 scripts/handoff_ops.py set-autoapprove <on|off>
 
 Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
 
+**Rules command**: If the owner sends a message with intent to set group rules, detect flexibly (natural language, any language). Examples: "rules: 回复用中文", "set rules: always reply in English", "群规则：不要动 prod 分支", "rules", "show rules". Two variants:
+
+- **Set rules**: Owner provides rules text. Extract the rules content and run:
+  ```bash
+  python3 scripts/handoff_ops.py set-rules --rules '<RULES_TEXT>'
+  ```
+  Send confirmation to Lark showing the new rules.
+
+- **Show rules**: Owner asks to see current rules. Run:
+  ```bash
+  python3 scripts/handoff_ops.py get-rules
+  ```
+  Send the rules text to Lark (or "No rules set." if empty).
+
+Rules are persisted in the group's pinned config card and loaded automatically on every future session activation. They function like a per-group CLAUDE.md.
+
 **Guest & coowner commands**: The owner can manage a whitelist of members who can interact with the bot. This works in both regular and sidecar mode. Detect these commands flexibly (natural language, any language):
 
 - **Add guests**: Owner mentions users with intent to grant guest access. Examples: "add @jack @alice as guest", "@jack 和 @alice 可以和你对话", "let @bob talk to you". The text will contain placeholders like `@_user_1` — look up the actual `open_id` and `name` from the reply's `mentions` array (filter out the bot's own mention). Then:
