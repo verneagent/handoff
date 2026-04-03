@@ -416,21 +416,21 @@ python3 scripts/handoff_ops.py set-autoapprove <on|off>
 
 Send a confirmation to Lark. When autoapprove is **on**, all permission requests are automatically approved without sending Approve/Deny cards. This is useful for trusted sessions where the user doesn't want to be interrupted. When **off** (default), the normal permission bridge flow applies.
 
-**Rules commands**: Group rules are a key-value map (like a per-group CLAUDE.md). Detect flexibly (natural language, any language):
+**群规 (group rules) commands**: Group rules are a key-value map (like a per-group CLAUDE.md). **Only trigger on "群规" keyword** — do NOT trigger on generic words like "rule", "rules", or "规则" alone (those may refer to cursor rules, inscribe, or other skill instructions).
 
-- **Add/update rule**: Owner provides a key and rule text. Examples: "add rule lang: 回复用中文", "rule prod: 不要动 prod 分支", "加规则 workflow: 代码改动前先说思路". Extract a short key and the rule text, then:
+- **Add/update**: "群规 lang: 回复用中文", "群规 prod: 不要动 prod 分支". Extract the key (first word after 群规) and the rule text (after the colon/space), then:
   ```bash
   python3 scripts/handoff_ops.py add-rule --key '<KEY>' --text '<RULE_TEXT>'
   ```
   Send confirmation to Lark showing the added/updated rule.
 
-- **Remove rule**: Owner wants to remove a rule by key. Examples: "remove rule prod", "删规则 lang". Extract the key, then:
+- **Remove**: "删群规 prod", "群规删 lang". Extract the key, then:
   ```bash
   python3 scripts/handoff_ops.py remove-rule --key '<KEY>'
   ```
   Send confirmation to Lark.
 
-- **Show rules**: Owner asks to see current rules. Examples: "rules", "show rules", "群规则". Run:
+- **Show all**: "群规" (alone, no key/text). Run:
   ```bash
   python3 scripts/handoff_ops.py get-rules
   ```
