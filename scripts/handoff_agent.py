@@ -233,6 +233,9 @@ def _build_agent_options(project_dir, model):
         if val:
             handoff_env[key] = val
 
+    def _stderr_handler(line):
+        _log(f"[sdk-stderr] {line.rstrip()}")
+
     return ClaudeAgentOptions(
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         setting_sources=["user", "project"],
@@ -245,6 +248,7 @@ def _build_agent_options(project_dir, model):
         cwd=project_dir,
         model=model,
         env=handoff_env,
+        stderr=_stderr_handler,
     )
 
 
@@ -261,25 +265,40 @@ async def run_agent_turn(client, prompt):
         TaskStartedMessage, TaskNotificationMessage,
     )
 
+    _log(f"[turn] query() sending prompt ({len(prompt)} chars)")
     await client.query(prompt)
+    _log("[turn] query() sent, starting receive_messages()")
     result_text = None
     last_assistant_text = None
     cost = 0.0
+    msg_count = 0
+    has_assistant_msg = False
     async for message in client.receive_messages():
+        msg_count += 1
+        msg_type = type(message).__name__
         if isinstance(message, AssistantMessage):
+            has_assistant_msg = True
+            text_len = 0
             for block in message.content:
                 if isinstance(block, TextBlock):
                     last_assistant_text = block.text
+                    text_len += len(block.text)
+            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)}")
         elif isinstance(message, TaskStartedMessage):
-            _log(f"Task started: {message.task_id}")
+            _log(f"[turn] msg#{msg_count} TaskStartedMessage task_id={message.task_id}")
         elif isinstance(message, TaskNotificationMessage):
-            _log(f"Task done: {message.task_id} ({message.status})")
+            _log(f"[turn] msg#{msg_count} TaskNotificationMessage task_id={message.task_id} status={message.status} has_assistant={has_assistant_msg}")
         elif isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
-            _log(f"Agent done. Cost: ${cost:.4f}, error={is_error}")
+            session_id = getattr(message, "session_id", "")
+            stop_reason = getattr(message, "stop_reason", "")
+            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={len(result_text or '')}")
             break
+        else:
+            _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
+    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg}")
     # Last AssistantMessage TextBlock has the full response;
     # ResultMessage.result is often a truncated summary.
     return (last_assistant_text or result_text), cost
