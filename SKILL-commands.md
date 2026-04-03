@@ -235,7 +235,7 @@ The script auto-detects the install directory (resolves symlinks), downloads the
 
 ## Agent Management (`/handoff agent`)
 
-macOS only. Manages launchd agents that run `handoff_agent.py` as background services. Each agent watches a Lark chat group and responds via Claude Agent SDK.
+macOS only. Manages handoff agents. Includes both **daemon** agents (launchd-managed, auto-restart) and **proc** agents (standalone `handoff_agent.py` processes).
 
 ### List Agents (`/handoff agent` or `/handoff agent list`)
 
@@ -243,7 +243,9 @@ macOS only. Manages launchd agents that run `handoff_agent.py` as background ser
 python3 .claude/skills/handoff/scripts/handoff_ops.py agent-list
 ```
 
-Print as a formatted table with columns: Name, Chat ID, Status (running/stopped), Project Dir, Model. Do NOT enter Handoff mode.
+Returns JSON with an `agents` array. Each agent has: `daemon` (bool), `pid`, `chat_name`, `chat_id`, `project_dir`, `running`, and optionally `name`, `model`, `log`, `err_log`.
+
+Print as a **markdown table** with columns: Type (`daemon`/`proc`), PID, Chat Name, Project Dir. Add a summary line: "Total: N agents (X daemon, Y non-daemon)". Do NOT enter Handoff mode.
 
 ### Install Agent (`/handoff agent install`)
 
