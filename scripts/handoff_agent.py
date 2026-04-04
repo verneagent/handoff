@@ -386,8 +386,9 @@ async def run_agent_turn(client, prompt, send_fn=None):
     Waits for all background tasks to complete after ResultMessage, with a
     timeout to avoid blocking indefinitely.
 
-    send_fn: callable(text) — sends text to Lark. If None, messages are
-    collected and the last one is returned as (text, cost) for backward compat.
+    send_fn: callable(text, task_id=None, pending_tasks=0) — sends text to
+    Lark with optional task context. If None, messages are collected and the
+    last one is returned as (text, cost) for backward compat.
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
@@ -425,9 +426,18 @@ async def run_agent_turn(client, prompt, send_fn=None):
             _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} got_result={got_result}")
             # Send non-empty text immediately (skip post-result chatter)
             if text_len > 0 and not got_result:
+                # Determine which task this message belongs to (if any)
+                current_task_id = None
+                parent = getattr(message, "parent_tool_use_id", None)
+                if parent:
+                    # Message from a subagent/task
+                    for tid in pending_tasks:
+                        current_task_id = tid  # best guess: latest pending
+                        break
                 if send_fn:
-                    send_fn(text)
-                    _log(f"[turn] sent {text_len} chars to Lark")
+                    send_fn(text, task_id=current_task_id,
+                            pending_tasks=len(pending_tasks))
+                    _log(f"[turn] sent {text_len} chars to Lark task_id={current_task_id}")
                 last_text = text
 
         elif isinstance(message, TaskStartedMessage):
@@ -991,11 +1001,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
                     session,
                 )
-                def _send_lark(text):
+                def _send_lark(text, task_id=None, pending_tasks=0):
                     """Send a message to Lark inline."""
                     try:
                         t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(t, chat_id, text)
+                        if task_id:
+                            _log(f"Response sent (task={task_id} pending={pending_tasks})")
                     except Exception as e:
                         _log(f"send error: {e}")
 
