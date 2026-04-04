@@ -280,10 +280,10 @@ def _build_permission_handler(credentials, chat_id, session_id_ref):
             )
 
             decision, _ = run_permission_poll_loop(
-                poll_fn=lambda cid, since: handoff_worker.poll_worker(
-                    worker_url, cid, since, key=nonce, profile=profile),
-                ack_fn=lambda cid, before: handoff_worker.ack_worker_replies(
-                    worker_url, cid, before, key=nonce, profile=profile),
+                poll_fn=lambda chat_id, since: handoff_worker.poll_worker(
+                    worker_url, chat_id, since, key=nonce, profile=profile),
+                ack_fn=lambda chat_id, before: handoff_worker.ack_worker_replies(
+                    worker_url, chat_id, before, key=nonce, profile=profile),
                 record_received_fn=handoff_db.record_received_message,
                 set_last_checked_fn=handoff_db.set_session_last_checked,
                 on_deny_fn=lambda: update_permission_card(
