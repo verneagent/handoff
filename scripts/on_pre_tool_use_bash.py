@@ -82,6 +82,10 @@ def main():
     except Exception:
         sys.exit(0)
 
+    # Agent mode: stop is handled by client.interrupt(), not this hook.
+    if os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK":
+        sys.exit(0)
+
     # Only active during handoff sessions
     flag_path = _stop_flag_path()
     if not flag_path:

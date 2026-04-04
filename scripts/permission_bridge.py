@@ -255,6 +255,11 @@ def main():
         warn(f"invalid hook input JSON: {e}")
         hook_input = {}
 
+    # Agent mode: permission is handled by can_use_tool callback, not this hook.
+    # Exit 1 to fall through (no decision) and avoid duplicate permission cards.
+    if os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK":
+        sys.exit(1)
+
     tool_name = hook_input.get("tool_name", "unknown")
     tool_input = hook_input.get("tool_input", {})
 
