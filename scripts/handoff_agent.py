@@ -386,7 +386,7 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
 PENDING_TASK_TIMEOUT = 60  # seconds to wait for pending tasks after ResultMessage
 
 
-async def run_agent_turn(client, prompt, send_fn=None):
+async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
     """Send a prompt to the persistent SDK client. Returns cost (float).
 
     Each non-empty AssistantMessage is sent immediately via send_fn.
@@ -396,6 +396,9 @@ async def run_agent_turn(client, prompt, send_fn=None):
     send_fn: callable(text, task_id=None, pending_tasks=0) — sends text to
     Lark with optional task context. If None, messages are collected and the
     last one is returned as (text, cost) for backward compat.
+    working_fn: callable(action, description="") — manages Working card.
+      action: "start" (create/show), "progress" (update description),
+              "done" (mark completed).
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
@@ -413,6 +416,7 @@ async def run_agent_turn(client, prompt, send_fn=None):
     got_result = False
     result_time = 0.0
     last_text = None  # fallback if no send_fn
+    working_started = False
 
     async for message in client.receive_messages():
         # Timeout check for pending tasks after ResultMessage
@@ -431,6 +435,10 @@ async def run_agent_turn(client, prompt, send_fn=None):
             text = "\n".join(text_parts)
             text_len = len(text)
             _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} got_result={got_result}")
+            # Tool use (no text, has blocks) → start Working card
+            if text_len == 0 and len(message.content) > 0 and not working_started and working_fn:
+                working_fn("start")
+                working_started = True
             # Send non-empty text immediately (skip post-result chatter)
             if text_len > 0 and not got_result:
                 # Determine which task this message belongs to (if any)
@@ -452,7 +460,10 @@ async def run_agent_turn(client, prompt, send_fn=None):
             _log(f"[turn] msg#{msg_count} TaskStartedMessage task_id={message.task_id} pending={len(pending_tasks)}")
 
         elif isinstance(message, TaskProgressMessage):
-            _log(f"[turn] msg#{msg_count} TaskProgressMessage task_id={message.task_id}")
+            desc = getattr(message, "description", "") or ""
+            _log(f"[turn] msg#{msg_count} TaskProgressMessage task_id={message.task_id} desc={desc[:60]}")
+            if working_fn and desc:
+                working_fn("progress", desc)
 
         elif isinstance(message, TaskNotificationMessage):
             pending_tasks.discard(message.task_id)
@@ -479,6 +490,8 @@ async def run_agent_turn(client, prompt, send_fn=None):
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
 
     _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
+    if working_fn and working_started:
+        working_fn("done")
     if send_fn:
         return cost
     return (last_text, cost)
@@ -1067,8 +1080,57 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     except Exception as e:
                         _log(f"send error: {e}")
 
+                # Working card state for this turn
+                _working_msg_id = [None]
+                _working_start_time = [0]
+
+                _WORKING_TITLES = [
+                    (0, "Working..."), (20, "Working hard..."),
+                    (40, "Working really hard..."), (60, "Working super hard..."),
+                    (90, "Working incredibly hard..."), (120, "Working unreasonably hard..."),
+                ]
+
+                def _working_fn(action, description=""):
+                    """Manage Working card: start/progress/done."""
+                    try:
+                        t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        if action == "start":
+                            _working_start_time[0] = int(time.time())
+                            card = lark_im.build_card("Working...", body=description or "`...`", color="grey")
+                            _working_msg_id[0] = lark_im.send_message(t, chat_id, card)
+                            handoff_db.set_working_message(session_id, _working_msg_id[0])
+                            _log(f"Working card created: {_working_msg_id[0]}")
+                        elif action == "progress" and _working_msg_id[0]:
+                            elapsed = int(time.time()) - _working_start_time[0]
+                            title = "Working..."
+                            for threshold, t_str in _WORKING_TITLES:
+                                if elapsed >= threshold:
+                                    title = t_str
+                            card = lark_im.build_card(title, body=f"`{description}`" if description else "", color="grey")
+                            try:
+                                lark_im.update_card_message(t, _working_msg_id[0], card)
+                            except Exception:
+                                pass  # PATCH fail is non-fatal for progress
+                        elif action == "done" and _working_msg_id[0]:
+                            elapsed = int(time.time()) - _working_start_time[0]
+                            if elapsed < 60:
+                                body = f"Completed in {elapsed}s"
+                            else:
+                                body = f"Completed in {elapsed // 60}m {elapsed % 60}s"
+                            card = lark_im.build_card("Done ✓", body=body, color="green")
+                            try:
+                                lark_im.update_card_message(t, _working_msg_id[0], card)
+                            except Exception:
+                                pass
+                            handoff_db.clear_working_message(session_id)
+                            _working_msg_id[0] = None
+                            _log(f"Working card done ({body})")
+                    except Exception as e:
+                        _log(f"working_fn error: {e}")
+
                 sdk_task = asyncio.create_task(
-                    run_agent_turn(client, user_message, send_fn=_send_lark))
+                    run_agent_turn(client, user_message, send_fn=_send_lark,
+                                   working_fn=_working_fn))
 
                 done, _ = await asyncio.wait(
                     {sdk_task, monitor_task},
@@ -1142,11 +1204,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     except Exception:
                         pass
 
-                # Reset Working card to Done after agent turn completes
-                try:
-                    handoff_lifecycle.reset_working_card(session_id)
-                except Exception as e:
-                    _log(f"reset_working_card error: {e}")
+                # Working card is managed by _working_fn inside run_agent_turn.
+                # No separate reset needed here.
 
             except Exception as e:
                 _log(f"Agent error: {e}")

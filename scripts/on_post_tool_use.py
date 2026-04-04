@@ -628,11 +628,11 @@ def main():
     if not session_id:
         return
 
-    # In agent mode, use the agent process's session_id for working card
-    # storage so reset_working_card can find it.
-    agent_session_id = os.environ.get("HANDOFF_SESSION_ID", "")
-    if agent_session_id and os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK":
-        session_id = agent_session_id
+    # Agent mode: Working card is managed by the agent process via
+    # TaskProgressMessage, not by this hook. Skip entirely to avoid
+    # orphan Working cards from background tasks.
+    if os.environ.get("HANDOFF_SESSION_TOOL") == "Claude Agent SDK":
+        return
 
     # Check for active handoff (resolve_session handles post-compaction session_id changes)
     session = handoff_db.resolve_session(session_id)
