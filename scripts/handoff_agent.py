@@ -385,12 +385,11 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
 
 
 
-async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
+async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
+                         stale_tasks=None):
     """Send a prompt to the persistent SDK client. Returns cost (float).
 
     Each non-empty AssistantMessage is sent immediately via send_fn.
-    Waits for all background tasks to complete after ResultMessage, with a
-    timeout to avoid blocking indefinitely.
 
     send_fn: callable(text, task_id=None, pending_tasks=0) — sends text to
     Lark with optional task context. If None, messages are collected and the
@@ -398,12 +397,16 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
     working_fn: callable(action, description="") — manages Working card.
       action: "start" (create/show), "progress" (update description),
               "done" (mark completed).
+    stale_tasks: set of task_ids from previous turns whose notifications
+      should be silently consumed (prevents "后台任务已完成" chatter).
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
         TaskStartedMessage, TaskNotificationMessage,
         TaskProgressMessage,
     )
+    if stale_tasks is None:
+        stale_tasks = set()
 
     _log(f"[turn] query() sending prompt ({len(prompt)} chars)")
     await client.query(prompt)
@@ -411,6 +414,7 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
     cost = 0.0
     msg_count = 0
     has_assistant_msg = False
+    has_real_assistant_msg = False  # True once we see a non-stale AssistantMessage
     pending_tasks = set()
     last_text = None  # fallback if no send_fn
     working_started = False
@@ -419,8 +423,27 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
         msg_count += 1
         msg_type = type(message).__name__
 
+        # Skip residual messages from stale tasks (previous turns)
+        if isinstance(message, TaskNotificationMessage) and message.task_id in stale_tasks:
+            stale_tasks.discard(message.task_id)
+            _log(f"[turn] msg#{msg_count} SKIPPED stale TaskNotification task_id={message.task_id}")
+            continue
+        if isinstance(message, ResultMessage) and stale_tasks and not has_real_assistant_msg:
+            # ResultMessage arrived but no real AssistantMessage yet —
+            # this is a stale result from a cancelled/completed background task
+            _log(f"[turn] msg#{msg_count} SKIPPED stale ResultMessage (no real assistant msg yet, stale_tasks={stale_tasks})")
+            continue
+        if isinstance(message, AssistantMessage) and stale_tasks and not has_real_assistant_msg:
+            # Check if this is task-cleanup chatter (short, no tool use)
+            text_parts_check = [b.text for b in message.content if isinstance(b, TextBlock) and b.text]
+            total_text = "".join(text_parts_check)
+            if len(total_text) > 0 and len(total_text) < 100 and len(message.content) == 1:
+                _log(f"[turn] msg#{msg_count} SKIPPED likely stale AssistantMessage ({len(total_text)} chars)")
+                continue
+
         if isinstance(message, AssistantMessage):
             has_assistant_msg = True
+            has_real_assistant_msg = True
             text_parts = []
             for block in message.content:
                 if isinstance(block, TextBlock) and block.text:
@@ -472,14 +495,16 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
 
             if pending_tasks:
                 # Model decided the turn is done but background tasks are
-                # still running. Cancel them to prevent their notifications
-                # from leaking into the next turn as "后台任务已完成" chatter.
+                # still running. Try to cancel them, and mark as stale so
+                # their residual notifications get skipped in the next turn.
                 for tid in list(pending_tasks):
+                    stale_tasks.add(tid)
                     try:
                         await client.stop_task(tid)
                         _log(f"[turn] cancelled pending task {tid}")
                     except Exception as e:
-                        _log(f"[turn] cancel task {tid} failed: {e}")
+                        _log(f"[turn] cancel task {tid} failed (marked stale): {e}")
+                _log(f"[turn] stale_tasks={stale_tasks}")
                 pending_tasks.clear()
             break
 
@@ -772,6 +797,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     msg_count = 0
     total_cost = 0.0
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
+    _stale_tasks = set()   # Task IDs from previous turns to skip
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -1119,7 +1145,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
                 sdk_task = asyncio.create_task(
                     run_agent_turn(client, user_message, send_fn=_send_lark,
-                                   working_fn=_working_fn))
+                                   working_fn=_working_fn,
+                                   stale_tasks=_stale_tasks))
 
                 done, _ = await asyncio.wait(
                     {sdk_task, monitor_task},
