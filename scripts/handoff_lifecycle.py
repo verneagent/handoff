@@ -41,8 +41,10 @@ def send_start_card(session_id, model, tool_name="Claude Agent SDK"):
         return None
     chat_id = session["chat_id"]
 
+    import datetime
+    local_time = datetime.datetime.now().strftime("%H:%M")
     title = f"Handoff from {tool_name} ({model})"
-    body = "Handed off to Lark. Reply here to continue working."
+    body = f"Handed off to Lark at {local_time}. Reply here to continue working."
     # Green for CLI, blue for Agent SDK — lets users distinguish modes at a glance
     color = "blue" if tool_name == "Claude Agent SDK" else "green"
     card = lark_im.build_card(title, body=body, color=color)
