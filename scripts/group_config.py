@@ -68,26 +68,60 @@ def _parse_config_from_card(message_item):
         if not content_str:
             return None
         content = json.loads(content_str)
-        # Navigate the card structure to find the JSON in markdown
+        # Navigate the card structure to find the JSON in markdown.
+        # Lark get_message returns a different structure than what we send:
+        #   Sent:     {"elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "..."}}]}
+        #   Returned: {"elements": [[{"tag": "text", "text": "json\n{...}\n"}]]}
         elements = content.get("elements", [])
         for el in elements:
-            text_obj = el.get("text", {})
-            md = text_obj.get("content", "")
-            # Strip ```json ... ``` fences
-            if md.startswith("```json\n") and md.endswith("\n```"):
-                raw = md[len("```json\n"):-len("\n```")]
-                return json.loads(raw)
-            if md.startswith("```\n") and md.endswith("\n```"):
-                raw = md[len("```\n"):-len("\n```")]
-                return json.loads(raw)
-            # Try parsing the raw content as JSON
-            try:
-                return json.loads(md)
-            except (json.JSONDecodeError, TypeError):
-                continue
+            # Handle nested list structure from get_message API
+            if isinstance(el, list):
+                for sub in el:
+                    if isinstance(sub, dict):
+                        md = sub.get("text", "") or sub.get("content", "")
+                        result = _try_parse_json_from_md(md)
+                        if result is not None:
+                            return result
+            elif isinstance(el, dict):
+                # Standard card structure
+                text_obj = el.get("text", {})
+                if isinstance(text_obj, dict):
+                    md = text_obj.get("content", "")
+                elif isinstance(text_obj, str):
+                    md = text_obj
+                else:
+                    continue
+                result = _try_parse_json_from_md(md)
+                if result is not None:
+                    return result
     except Exception as e:
         _warn(f"failed to parse config card: {e}")
     return None
+
+
+def _try_parse_json_from_md(md):
+    """Try to extract JSON config from a markdown string."""
+    if not md:
+        return None
+    # Strip ```json ... ``` fences
+    if md.startswith("```json\n") and md.endswith("\n```"):
+        raw = md[len("```json\n"):-len("\n```")]
+        return json.loads(raw)
+    if md.startswith("```\n") and md.endswith("\n```"):
+        raw = md[len("```\n"):-len("\n```")]
+        return json.loads(raw)
+    # Lark strips fences — try raw text starting with "json\n"
+    if md.startswith("json\n"):
+        raw = md[len("json\n"):].strip()
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Try parsing as raw JSON
+    try:
+        return json.loads(md)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _find_config_pin(token, chat_id):
