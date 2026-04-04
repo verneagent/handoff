@@ -1093,7 +1093,10 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         if action == "start":
                             _working_start_time[0] = int(time.time())
-                            card = lark_im.build_card("Working...", body=description or "`...`", color="grey")
+                            card = lark_im.build_card(
+                                "Working...", body=description or "`...`", color="grey",
+                                buttons=[("Stop", "__stop__", "default")],
+                                chat_id=chat_id)
                             _working_msg_id[0] = lark_im.send_message(t, chat_id, card)
                             handoff_db.set_working_message(session_id, _working_msg_id[0])
                             _log(f"Working card created: {_working_msg_id[0]}")
@@ -1103,7 +1106,10 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                             for threshold, t_str in _WORKING_TITLES:
                                 if elapsed >= threshold:
                                     title = t_str
-                            card = lark_im.build_card(title, body=f"`{description}`" if description else "", color="grey")
+                            card = lark_im.build_card(
+                                title, body=f"`{description}`" if description else "", color="grey",
+                                buttons=[("Stop", "__stop__", "default")],
+                                chat_id=chat_id)
                             try:
                                 lark_im.update_card_message(t, _working_msg_id[0], card)
                             except Exception:
