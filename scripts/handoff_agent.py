@@ -237,14 +237,10 @@ def _build_permission_handler(credentials, chat_id, session_id_ref):
             return any(s in cmd for s in internal)
         return False
 
-    async def can_use_tool(tool_name, tool_input, _context):
+    def _poll_permission_sync(tool_name, tool_input, sid):
+        """Synchronous permission poll — runs in executor to avoid blocking event loop."""
         from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
-        # Auto-approve handoff internal commands
-        if _is_handoff_cmd(tool_name, tool_input):
-            return PermissionResultAllow()
-
-        sid = session_id_ref[0]
         session = handoff_db.get_session(sid) if sid else None
 
         # Autoapprove mode
@@ -252,12 +248,11 @@ def _build_permission_handler(credentials, chat_id, session_id_ref):
             _log(f"[perm] autoapprove: {tool_name}")
             return PermissionResultAllow()
 
-        # Send permission card to Lark and poll for decision
         try:
             token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
             import handoff_config
-            profile = session.get("config_profile", "default") if session else "default"
-            worker_url = handoff_config.load_worker_url(profile)
+            perm_profile = session.get("config_profile", "default") if session else "default"
+            worker_url = handoff_config.load_worker_url(perm_profile)
 
             operator_open_id = session.get("operator_open_id", "") if session else ""
             approver_ids = {operator_open_id} if operator_open_id else set()
@@ -266,24 +261,22 @@ def _build_permission_handler(credentials, chat_id, session_id_ref):
                     if g.get("role") == "coowner":
                         approver_ids.add(g["open_id"])
 
-            perm_body = build_permission_body(tool_name,
-                _format_tool_for_permission(tool_name, tool_input))
-            profile = session.get("config_profile", "default") if session else "default"
+            description = _format_tool_for_permission(tool_name, tool_input)
+            perm_body = build_permission_body(tool_name, description)
 
             nonce, perm_msg_id = prepare_permission_request(
-                lark_im, token, chat_id, tool_name,
-                _format_tool_for_permission(tool_name, tool_input),
+                lark_im, token, chat_id, tool_name, description,
                 ack_fn=lambda key, before: handoff_worker.ack_worker_replies(
-                    worker_url, chat_id, before, key=key, profile=profile),
+                    worker_url, chat_id, before, key=key, profile=perm_profile),
                 log_fn=lambda m: _log(f"[perm] {m}"),
                 approver_ids=approver_ids,
             )
 
             decision, _ = run_permission_poll_loop(
                 poll_fn=lambda chat_id, since: handoff_worker.poll_worker(
-                    worker_url, chat_id, since, key=nonce, profile=profile),
+                    worker_url, chat_id, since, key=nonce, profile=perm_profile),
                 ack_fn=lambda chat_id, before: handoff_worker.ack_worker_replies(
-                    worker_url, chat_id, before, key=nonce, profile=profile),
+                    worker_url, chat_id, before, key=nonce, profile=perm_profile),
                 record_received_fn=handoff_db.record_received_message,
                 set_last_checked_fn=handoff_db.set_session_last_checked,
                 on_deny_fn=lambda: update_permission_card(
@@ -305,6 +298,20 @@ def _build_permission_handler(credentials, chat_id, session_id_ref):
         except Exception as e:
             _log(f"[perm] error: {e}")
             return PermissionResultDeny(message=f"Permission check failed: {e}")
+
+    async def can_use_tool(tool_name, tool_input, _context):
+        from claude_agent_sdk import PermissionResultAllow
+
+        # Auto-approve handoff internal commands (fast, no I/O)
+        if _is_handoff_cmd(tool_name, tool_input):
+            return PermissionResultAllow()
+
+        # Run synchronous poll in executor to avoid blocking the event loop
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, _poll_permission_sync, tool_name, tool_input, session_id_ref[0]
+        )
 
     return can_use_tool
 
