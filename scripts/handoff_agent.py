@@ -213,19 +213,136 @@ def _build_agent_append_prompt():
         return ""
 
 
-def _build_agent_options(project_dir, model):
-    """Build ClaudeAgentOptions."""
+def _build_permission_handler(credentials, chat_id, session_id_ref):
+    """Build an async can_use_tool callback for Lark-based permission bridging.
+
+    session_id_ref: mutable list [session_id] so the callback sees the latest.
+    """
+    from permission_core import (
+        build_permission_body,
+        prepare_permission_request,
+        run_permission_poll_loop,
+        update_permission_card,
+    )
+
+    def _is_handoff_cmd(tool_name, tool_input):
+        if tool_name != "Bash":
+            return False
+        cmd = tool_input.get("command", "")
+        internal = ["handoff_ops.py", "send_to_group.py", "wait_for_reply.py",
+                     "send_and_wait.py", "start_and_wait.py", "end_and_cleanup.py",
+                     "iterm2_silence.py", "enter_handoff.py", "preflight.py",
+                     "team_status.py"]
+        if "$SKILL_SCRIPTS/" in cmd or "/handoff/scripts/" in cmd:
+            return any(s in cmd for s in internal)
+        return False
+
+    async def can_use_tool(tool_name, tool_input, _context):
+        from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+        # Auto-approve handoff internal commands
+        if _is_handoff_cmd(tool_name, tool_input):
+            return PermissionResultAllow()
+
+        sid = session_id_ref[0]
+        session = handoff_db.get_session(sid) if sid else None
+
+        # Autoapprove mode
+        if session and session.get("autoapprove"):
+            _log(f"[perm] autoapprove: {tool_name}")
+            return PermissionResultAllow()
+
+        # Send permission card to Lark and poll for decision
+        try:
+            token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+            import handoff_config
+            profile = session.get("config_profile", "default") if session else "default"
+            worker_url = handoff_config.load_worker_url(profile)
+
+            operator_open_id = session.get("operator_open_id", "") if session else ""
+            approver_ids = {operator_open_id} if operator_open_id else set()
+            if session:
+                for g in session.get("guests") or []:
+                    if g.get("role") == "coowner":
+                        approver_ids.add(g["open_id"])
+
+            perm_body = build_permission_body(tool_name,
+                _format_tool_for_permission(tool_name, tool_input))
+            profile = session.get("config_profile", "default") if session else "default"
+
+            nonce, perm_msg_id = prepare_permission_request(
+                lark_im, token, chat_id, tool_name,
+                _format_tool_for_permission(tool_name, tool_input),
+                ack_fn=lambda key, before: handoff_worker.ack_worker_replies(
+                    worker_url, chat_id, before, key=key, profile=profile),
+                log_fn=lambda m: _log(f"[perm] {m}"),
+                approver_ids=approver_ids,
+            )
+
+            decision, _ = run_permission_poll_loop(
+                poll_fn=lambda cid, since: handoff_worker.poll_worker(
+                    worker_url, cid, since, key=nonce, profile=profile),
+                ack_fn=lambda cid, before: handoff_worker.ack_worker_replies(
+                    worker_url, cid, before, key=nonce, profile=profile),
+                record_received_fn=handoff_db.record_received_message,
+                set_last_checked_fn=handoff_db.set_session_last_checked,
+                on_deny_fn=lambda: update_permission_card(
+                    lark_im, token, perm_msg_id, "deny", tool_name, perm_body),
+                chat_id=chat_id,
+                session_id=sid,
+                since="0",
+                timeout_seconds=0,
+                log_fn=lambda m: _log(f"[perm] {m}"),
+                approver_ids=approver_ids,
+            )
+
+            if decision in ("allow", "always"):
+                update_permission_card(lark_im, token, perm_msg_id, decision, tool_name, perm_body)
+                return PermissionResultAllow()
+            else:
+                return PermissionResultDeny(message=f"Permission to use {tool_name} was denied via Lark.")
+
+        except Exception as e:
+            _log(f"[perm] error: {e}")
+            return PermissionResultDeny(message=f"Permission check failed: {e}")
+
+    return can_use_tool
+
+
+def _format_tool_for_permission(tool_name, tool_input):
+    """Format a tool call description for permission card display."""
+    if tool_name == "Bash":
+        cmd = tool_input.get("command", "")
+        desc = tool_input.get("description", "")
+        parts = []
+        if desc:
+            parts.append(desc)
+        if cmd:
+            display = cmd if len(cmd) <= 200 else cmd[:200] + "..."
+            parts.append(f"`{display}`")
+        return "\n".join(parts) if parts else "Run a command"
+    if tool_name in ("Write", "Edit"):
+        path = tool_input.get("file_path", "")
+        return f"File: `{path}`" if path else f"{tool_name} a file"
+    return f"Use {tool_name}"
+
+
+def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
+                         session_id_ref=None):
+    """Build ClaudeAgentOptions.
+
+    credentials, chat_id, session_id_ref: passed to build the can_use_tool
+    permission handler. If not provided, permission falls through to default.
+    """
     from claude_agent_sdk import ClaudeAgentOptions
 
     skill_dir = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
-    # Start with essential system vars, then add handoff-specific ones
     handoff_env = {
         "PATH": f"/opt/homebrew/bin:/opt/homebrew/sbin:{os.environ.get('PATH', '/usr/bin:/bin')}",
         "HOME": os.environ.get("HOME", ""),
         "USER": os.environ.get("USER", ""),
         "HANDOFF_SKILL_DIR": skill_dir,
     }
-    # Forward session/proxy vars that hooks and scripts need
     for key in ("HANDOFF_SESSION_ID", "HANDOFF_PROJECT_DIR", "HANDOFF_SESSION_TOOL",
                 "HANDOFF_TMP_DIR", "http_proxy", "https_proxy", "all_proxy",
                 "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
@@ -235,6 +352,11 @@ def _build_agent_options(project_dir, model):
 
     def _stderr_handler(line):
         _log(f"[sdk-stderr] {line.rstrip()}")
+
+    # Build permission handler if we have credentials
+    perm_handler = None
+    if credentials and chat_id and session_id_ref:
+        perm_handler = _build_permission_handler(credentials, chat_id, session_id_ref)
 
     return ClaudeAgentOptions(
         allowed_tools=["Skill", "Read", "Write", "Edit", "Bash", "Glob", "Grep"],
@@ -249,20 +371,25 @@ def _build_agent_options(project_dir, model):
         model=model,
         env=handoff_env,
         stderr=_stderr_handler,
+        can_use_tool=perm_handler,
+        hooks={},  # Disable all CLI hooks — agent handles everything
     )
+
+
+PENDING_TASK_TIMEOUT = 60  # seconds to wait for pending tasks after ResultMessage
 
 
 async def run_agent_turn(client, prompt):
     """Send a prompt to the persistent SDK client. Returns (result_text, cost).
 
-    Returns as soon as ResultMessage is received. Background tasks
-    (run_in_background agents) may still be running — their completions
-    will arrive as TaskNotificationMessage in subsequent turns, but they
-    should NOT block the current turn (same as Claude Code's behavior).
+    Waits for all background tasks to complete after ResultMessage, with a
+    timeout to avoid blocking indefinitely. This prevents task notifications
+    from leaking into the next turn's message stream.
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
         TaskStartedMessage, TaskNotificationMessage,
+        TaskProgressMessage,
     )
 
     _log(f"[turn] query() sending prompt ({len(prompt)} chars)")
@@ -273,9 +400,18 @@ async def run_agent_turn(client, prompt):
     cost = 0.0
     msg_count = 0
     has_assistant_msg = False
+    pending_tasks = set()
+    got_result = False
+    result_time = 0.0
+
     async for message in client.receive_messages():
+        # Timeout check for pending tasks after ResultMessage
+        if got_result and pending_tasks and (time.time() - result_time) > PENDING_TASK_TIMEOUT:
+            _log(f"[turn] timeout waiting for {len(pending_tasks)} pending tasks: {pending_tasks}")
+            break
         msg_count += 1
         msg_type = type(message).__name__
+
         if isinstance(message, AssistantMessage):
             has_assistant_msg = True
             text_len = 0
@@ -284,21 +420,40 @@ async def run_agent_turn(client, prompt):
                     last_assistant_text = block.text
                     text_len += len(block.text)
             _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)}")
+
         elif isinstance(message, TaskStartedMessage):
-            _log(f"[turn] msg#{msg_count} TaskStartedMessage task_id={message.task_id}")
+            pending_tasks.add(message.task_id)
+            _log(f"[turn] msg#{msg_count} TaskStartedMessage task_id={message.task_id} pending={len(pending_tasks)}")
+
+        elif isinstance(message, TaskProgressMessage):
+            _log(f"[turn] msg#{msg_count} TaskProgressMessage task_id={message.task_id}")
+
         elif isinstance(message, TaskNotificationMessage):
-            _log(f"[turn] msg#{msg_count} TaskNotificationMessage task_id={message.task_id} status={message.status} has_assistant={has_assistant_msg}")
+            pending_tasks.discard(message.task_id)
+            _log(f"[turn] msg#{msg_count} TaskNotificationMessage task_id={message.task_id} status={message.status} pending={len(pending_tasks)}")
+            if got_result and not pending_tasks:
+                _log("[turn] all pending tasks done after ResultMessage, ending turn")
+                break
+
         elif isinstance(message, ResultMessage):
             result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
             session_id = getattr(message, "session_id", "")
             stop_reason = getattr(message, "stop_reason", "")
-            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={len(result_text or '')}")
-            break
+            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={len(result_text or '')} pending={len(pending_tasks)}")
+
+            if not pending_tasks:
+                break  # No pending tasks, end turn normally
+            # Pending tasks exist — continue consuming with timeout
+            got_result = True
+            result_time = time.time()
+            _log(f"[turn] ResultMessage received but {len(pending_tasks)} tasks pending, waiting (timeout={PENDING_TASK_TIMEOUT}s)...")
+
         else:
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
-    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg}")
+
+    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
     # Last AssistantMessage TextBlock has the full response;
     # ResultMessage.result is often a truncated summary.
     return (last_assistant_text or result_text), cost
@@ -573,7 +728,10 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
     # Persistent ClaudeSDKClient — session stays alive across turns
     from claude_agent_sdk import ClaudeSDKClient
-    state = {"options": _build_agent_options(project_dir, model)}
+    session_id_ref = [session_id]  # mutable ref for permission handler
+    state = {"options": _build_agent_options(
+        project_dir, model, credentials=credentials, chat_id=chat_id,
+        session_id_ref=session_id_ref)}
     client = ClaudeSDKClient(options=state["options"])
     await client.__aenter__()
     _log("Agent SDK client initialized")
@@ -670,7 +828,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     new_model = parts[1].strip()
                     old_model = model
                     model = new_model
-                    state["options"] = _build_agent_options(project_dir, model)
+                    state["options"] = _build_agent_options(
+                        project_dir, model, credentials=credentials,
+                        chat_id=chat_id, session_id_ref=session_id_ref)
                     await _restart_client()
                     # Update tabs to reflect new model name
                     try:
@@ -700,7 +860,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     if os.path.isdir(new_dir):
                         project_dir = os.path.abspath(new_dir)
                         os.environ["HANDOFF_PROJECT_DIR"] = project_dir
-                        state["options"] = _build_agent_options(project_dir, model)
+                        state["options"] = _build_agent_options(
+                            project_dir, model, credentials=credentials,
+                            chat_id=chat_id, session_id_ref=session_id_ref)
                         await _restart_client()
                         token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                         send_response_inline(token, chat_id, f"Working directory: **{project_dir}**\nSession cleared.")
