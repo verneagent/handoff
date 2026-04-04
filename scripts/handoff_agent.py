@@ -632,29 +632,9 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
                     if _is_authorized_sender(r, operator_open_id, member_roles):
                         return "handback"
 
-                # autoapprove on/off — execute immediately during turn
-                text_lower = r.get("text", "").strip().lower()
-                for m in (r.get("mentions") or []):
-                    key = m.get("key", "")
-                    if key:
-                        text_lower = text_lower.replace(key.lower(), "").strip()
-                text_lower = re.sub(r"\s+", " ", text_lower).strip()
-                ap_match = re.match(r"(auto[\s\-]*approve|autoapprove)\s+(on|off)", text_lower)
-                if ap_match and _is_authorized_sender(r, operator_open_id, member_roles):
-                    enabled = ap_match.group(2) == "on"
-                    try:
-                        creds = handoff_config.load_credentials(profile=profile)
-                        token = lark_im.get_tenant_token(creds["app_id"], creds["app_secret"])
-                        group_config.set_autoapprove(token, chat_id, enabled)
-                        handoff_db.set_autoapprove(chat_id, enabled)
-                        card = lark_im.build_card(
-                            f"Auto-approve {'enabled' if enabled else 'disabled'}",
-                            color="green" if enabled else "grey")
-                        lark_im.send_message(token, chat_id, card)
-                        _log(f"Monitor: autoapprove {'on' if enabled else 'off'}")
-                    except Exception as e:
-                        _log(f"Monitor: autoapprove error: {e}")
-                    # Don't return — not a turn-interrupting signal
+                # autoapprove is handled by the main loop command detection
+                # after the turn ends. Not in the monitor — would cause
+                # duplicate cards since the message stays in worker DO.
 
             # Do NOT ack regular messages — leave them in the DO for
             # wait_for_reply_inline to pick up after the turn.
