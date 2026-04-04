@@ -629,7 +629,7 @@ def _message_monitor_sync(worker_url, chat_id, since, profile, stop_event,
                     if key:
                         text_lower = text_lower.replace(key.lower(), "").strip()
                 text_lower = re.sub(r"\s+", " ", text_lower).strip()
-                ap_match = re.match(r"(auto\s*approve|autoapprove)\s+(on|off)", text_lower)
+                ap_match = re.match(r"(auto[\s\-]*approve|autoapprove)\s+(on|off)", text_lower)
                 if ap_match and _is_authorized_sender(r, operator_open_id, member_roles):
                     enabled = ap_match.group(2) == "on"
                     try:
@@ -990,7 +990,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                 continue
 
             # Check autoapprove
-            if re.match(r"(auto\s*approve|autoapprove)\s+(on|off)", msg_lower):
+            if re.match(r"(auto[\s\-]*approve|autoapprove)\s+(on|off)", msg_lower):
                 enabled = "on" in msg_lower.split()[-1]
                 try:
                     token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
