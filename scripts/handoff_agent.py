@@ -383,7 +383,6 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
     )
 
 
-PENDING_TASK_TIMEOUT = 60  # seconds to wait for pending tasks after ResultMessage
 
 
 async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
@@ -413,18 +412,10 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
     msg_count = 0
     has_assistant_msg = False
     pending_tasks = set()
-    got_result = False
-    result_time = 0.0
     last_text = None  # fallback if no send_fn
     working_started = False
 
-    timed_out = False
     async for message in client.receive_messages():
-        # Timeout check for pending tasks after ResultMessage
-        if got_result and pending_tasks and (time.time() - result_time) > PENDING_TASK_TIMEOUT:
-            _log(f"[turn] timeout waiting for {len(pending_tasks)} pending tasks: {pending_tasks}")
-            timed_out = True
-            break
         msg_count += 1
         msg_type = type(message).__name__
 
@@ -436,13 +427,13 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
                     text_parts.append(block.text)
             text = "\n".join(text_parts)
             text_len = len(text)
-            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} got_result={got_result}")
+            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)}")
             # Tool use (no text, has blocks) → start Working card
             if text_len == 0 and len(message.content) > 0 and not working_started and working_fn:
                 working_fn("start")
                 working_started = True
-            # Send non-empty text immediately (skip post-result chatter)
-            if text_len > 0 and not got_result:
+            # Send non-empty text immediately
+            if text_len > 0:
                 # Determine which task this message belongs to (if any)
                 current_task_id = None
                 parent = getattr(message, "parent_tool_use_id", None)
@@ -470,9 +461,6 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
         elif isinstance(message, TaskNotificationMessage):
             pending_tasks.discard(message.task_id)
             _log(f"[turn] msg#{msg_count} TaskNotificationMessage task_id={message.task_id} status={message.status} pending={len(pending_tasks)}")
-            if got_result and not pending_tasks:
-                _log("[turn] all pending tasks done after ResultMessage, ending turn")
-                break
 
         elif isinstance(message, ResultMessage):
             cost = getattr(message, "total_cost_usd", 0) or 0.0
@@ -482,20 +470,27 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
             result_len = len(getattr(message, "result", "") or "")
             _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} pending={len(pending_tasks)}")
 
-            if not pending_tasks:
-                break  # No pending tasks, end turn normally
-            got_result = True
-            result_time = time.time()
-            _log(f"[turn] ResultMessage received but {len(pending_tasks)} tasks pending, waiting (timeout={PENDING_TASK_TIMEOUT}s)...")
+            if pending_tasks:
+                # Model decided the turn is done but background tasks are
+                # still running. Cancel them to prevent their notifications
+                # from leaking into the next turn as "后台任务已完成" chatter.
+                for tid in list(pending_tasks):
+                    try:
+                        await client.stop_task(tid)
+                        _log(f"[turn] cancelled pending task {tid}")
+                    except Exception as e:
+                        _log(f"[turn] cancel task {tid} failed: {e}")
+                pending_tasks.clear()
+            break
 
         else:
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
 
-    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)} timed_out={timed_out}")
+    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
     if working_fn and working_started:
         working_fn("done")
     if send_fn:
-        return cost, timed_out
+        return cost
     return (last_text, cost)
 
 
@@ -1139,7 +1134,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                turn_timed_out = False
                 if monitor_task in done:
                     monitor_signal = monitor_task.result()
 
@@ -1189,13 +1183,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         # Monitor exited without signal (WS disconnect).
                         # Wait for SDK to finish normally.
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
-                        turn_cost, turn_timed_out = await sdk_task
+                        turn_cost = await sdk_task
                         total_cost += turn_cost
                         _log("Agent turn done (WS reconnect path).")
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
-                    turn_cost, turn_timed_out = sdk_task.result()
+                    turn_cost = sdk_task.result()
                     total_cost += turn_cost
                     _log("Agent turn done.")
 
@@ -1207,14 +1201,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     except Exception:
                         pass
 
-                # If pending tasks timed out, restart client to clear
-                # the SDK message stream. Without this, the next turn
-                # consumes residual TaskNotification + model chatter
-                # ("后台任务已完成") as if it were the new turn's response.
-                if turn_timed_out:
-                    _log("Pending task timeout — restarting SDK client to clear residual messages")
-                    await _restart_client()
-                    _log("SDK client restarted")
+                # Pending tasks are cancelled in run_agent_turn via
+                # client.stop_task(). No timeout/restart needed.
 
             except Exception as e:
                 _log(f"Agent error: {e}")
