@@ -387,7 +387,7 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
 
 async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
                          stale_tasks=None):
-    """Send a prompt to the persistent SDK client. Returns cost (float).
+    """Send a prompt to the persistent SDK client. Returns (cost, usage).
 
     Each non-empty AssistantMessage is sent immediately via send_fn.
 
@@ -403,7 +403,7 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
         TaskStartedMessage, TaskNotificationMessage,
-        TaskProgressMessage,
+        TaskProgressMessage, SystemMessage,
     )
     if stale_tasks is None:
         stale_tasks = set()
@@ -412,38 +412,38 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
     await client.query(prompt)
     _log("[turn] query() sent, starting receive_messages()")
     cost = 0.0
+    usage = {}
     msg_count = 0
     has_assistant_msg = False
-    has_real_assistant_msg = False  # True once we see a non-stale AssistantMessage
     pending_tasks = set()
     last_text = None  # fallback if no send_fn
     working_started = False
+    _skipping_stale = False  # True while consuming stale task aftermath
 
     async for message in client.receive_messages():
         msg_count += 1
         msg_type = type(message).__name__
 
-        # Skip residual messages from stale tasks (previous turns)
+        # Skip residual messages from stale tasks (previous turns).
+        # When a stale TaskNotification arrives, also skip the model's
+        # reaction (AssistantMessage chatter + ResultMessage) until the
+        # next init SystemMessage marks the real query start.
         if isinstance(message, TaskNotificationMessage) and message.task_id in stale_tasks:
             stale_tasks.discard(message.task_id)
+            _skipping_stale = True
             _log(f"[turn] msg#{msg_count} SKIPPED stale TaskNotification task_id={message.task_id}")
             continue
-        if isinstance(message, ResultMessage) and stale_tasks and not has_real_assistant_msg:
-            # ResultMessage arrived but no real AssistantMessage yet —
-            # this is a stale result from a cancelled/completed background task
-            _log(f"[turn] msg#{msg_count} SKIPPED stale ResultMessage (no real assistant msg yet, stale_tasks={stale_tasks})")
-            continue
-        if isinstance(message, AssistantMessage) and stale_tasks and not has_real_assistant_msg:
-            # Check if this is task-cleanup chatter (short, no tool use)
-            text_parts_check = [b.text for b in message.content if isinstance(b, TextBlock) and b.text]
-            total_text = "".join(text_parts_check)
-            if len(total_text) > 0 and len(total_text) < 100 and len(message.content) == 1:
-                _log(f"[turn] msg#{msg_count} SKIPPED likely stale AssistantMessage ({len(total_text)} chars)")
+        if _skipping_stale:
+            if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
+                _skipping_stale = False
+                _log(f"[turn] msg#{msg_count} init message — stale skip ended")
+                # Fall through to normal handling
+            else:
+                _log(f"[turn] msg#{msg_count} SKIPPED (stale aftermath) {msg_type}")
                 continue
 
         if isinstance(message, AssistantMessage):
             has_assistant_msg = True
-            has_real_assistant_msg = True
             text_parts = []
             for block in message.content:
                 if isinstance(block, TextBlock) and block.text:
@@ -487,11 +487,12 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
 
         elif isinstance(message, ResultMessage):
             cost = getattr(message, "total_cost_usd", 0) or 0.0
+            usage = getattr(message, "usage", None) or {}
             is_error = getattr(message, "is_error", False)
             session_id = getattr(message, "session_id", "")
             stop_reason = getattr(message, "stop_reason", "")
             result_len = len(getattr(message, "result", "") or "")
-            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} pending={len(pending_tasks)}")
+            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} usage={usage} pending={len(pending_tasks)}")
 
             if pending_tasks:
                 # Model decided the turn is done but background tasks are
@@ -515,8 +516,8 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
     if working_fn and working_started:
         working_fn("done")
     if send_fn:
-        return cost
-    return (last_text, cost)
+        return (cost, usage)
+    return (last_text, cost, usage)
 
 
 def _is_esc_command(text, mentions=None):
@@ -798,6 +799,49 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     total_cost = 0.0
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
     _stale_tasks = set()   # Task IDs from previous turns to skip
+    _context_warned = False  # Only warn once per session about high context usage
+    _CONTEXT_WARN_THRESHOLD = 0.8  # Warn at 80%
+
+    def _get_context_limit():
+        """Return context window size for the current model."""
+        # Model family → context window (tokens).
+        # Update when Anthropic ships models with different windows.
+        _limits = {
+            "claude-opus-4": 200_000,
+            "claude-sonnet-4": 200_000,
+            "claude-haiku-4": 200_000,
+            "claude-3-5": 200_000,
+            "claude-3-opus": 200_000,
+            "claude-3-haiku": 200_000,
+        }
+        for prefix, limit in _limits.items():
+            if model.startswith(prefix):
+                return limit
+        return 200_000  # safe default for unknown models
+
+    def _check_context_usage(turn_usage):
+        nonlocal _context_warned
+        if _context_warned or not turn_usage:
+            return
+        input_tokens = turn_usage.get("input_tokens", 0)
+        context_limit = _get_context_limit()
+        if input_tokens <= 0:
+            return
+        ratio = input_tokens / context_limit
+        _log(f"[context] input_tokens={input_tokens} limit={context_limit} usage={ratio:.1%}")
+        if ratio >= _CONTEXT_WARN_THRESHOLD:
+            _context_warned = True
+            pct = int(ratio * 100)
+            try:
+                t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                card = lark_im.build_card(
+                    f"⚠️ Context {pct}%",
+                    body=f"Input tokens: **{input_tokens:,}** / {context_limit:,}\n\n"
+                         f"Context is getting full. Use `/clear` to reset if needed.",
+                    color="orange")
+                lark_im.send_message(t, chat_id, card)
+            except Exception as e:
+                _log(f"context warning send error: {e}")
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -897,6 +941,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             # Check /clear
             if msg_lower in ("/clear", "clear", "清空", "重置"):
+                _context_warned = False
                 await _restart_client()
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 import datetime
@@ -1202,14 +1247,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         # Monitor exited without signal (WS disconnect).
                         # Wait for SDK to finish normally.
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
-                        turn_cost = await sdk_task
+                        turn_cost, turn_usage = await sdk_task
                         total_cost += turn_cost
+                        _check_context_usage(turn_usage)
                         _log("Agent turn done (WS reconnect path).")
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
-                    turn_cost = sdk_task.result()
+                    turn_cost, turn_usage = sdk_task.result()
                     total_cost += turn_cost
+                    _check_context_usage(turn_usage)
                     _log("Agent turn done.")
 
                     # Ensure monitor is cleaned up
