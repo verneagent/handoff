@@ -418,10 +418,12 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
     last_text = None  # fallback if no send_fn
     working_started = False
 
+    timed_out = False
     async for message in client.receive_messages():
         # Timeout check for pending tasks after ResultMessage
         if got_result and pending_tasks and (time.time() - result_time) > PENDING_TASK_TIMEOUT:
             _log(f"[turn] timeout waiting for {len(pending_tasks)} pending tasks: {pending_tasks}")
+            timed_out = True
             break
         msg_count += 1
         msg_type = type(message).__name__
@@ -489,11 +491,11 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None):
         else:
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
 
-    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
+    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)} timed_out={timed_out}")
     if working_fn and working_started:
         working_fn("done")
     if send_fn:
-        return cost
+        return cost, timed_out
     return (last_text, cost)
 
 
@@ -1137,6 +1139,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
+                turn_timed_out = False
                 if monitor_task in done:
                     monitor_signal = monitor_task.result()
 
@@ -1186,13 +1189,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         # Monitor exited without signal (WS disconnect).
                         # Wait for SDK to finish normally.
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
-                        turn_cost = await sdk_task
+                        turn_cost, turn_timed_out = await sdk_task
                         total_cost += turn_cost
                         _log("Agent turn done (WS reconnect path).")
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
-                    turn_cost = sdk_task.result()
+                    turn_cost, turn_timed_out = sdk_task.result()
                     total_cost += turn_cost
                     _log("Agent turn done.")
 
@@ -1204,8 +1207,14 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     except Exception:
                         pass
 
-                # Working card is managed by _working_fn inside run_agent_turn.
-                # No separate reset needed here.
+                # If pending tasks timed out, restart client to clear
+                # the SDK message stream. Without this, the next turn
+                # consumes residual TaskNotification + model chatter
+                # ("后台任务已完成") as if it were the new turn's response.
+                if turn_timed_out:
+                    _log("Pending task timeout — restarting SDK client to clear residual messages")
+                    await _restart_client()
+                    _log("SDK client restarted")
 
             except Exception as e:
                 _log(f"Agent error: {e}")
