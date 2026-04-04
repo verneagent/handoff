@@ -682,6 +682,22 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     _log(f"Activated session {session_id} for chat {chat_id}"
          + (f" (need_mention)" if need_mention else ""))
 
+    # Sync group config from Lark pinned card → local DB
+    try:
+        gc = group_config.load_config(token, chat_id, force=True)
+        guests = gc.get("guests", [])
+        if guests:
+            handoff_db.set_guests(session_id, guests)
+        msg_filter = gc.get("filter")
+        if msg_filter:
+            handoff_db.set_message_filter(chat_id, msg_filter)
+        autoapprove = gc.get("autoapprove", False)
+        handoff_db.set_autoapprove(chat_id, autoapprove)
+        rules = gc.get("rules", {})
+        _log(f"Group config synced: guests={len(guests)} filter={msg_filter} autoapprove={autoapprove} rules={len(rules)}")
+    except Exception as e:
+        _log(f"Group config sync failed (non-fatal): {e}")
+
     try:
         handoff_lifecycle.handoff_start(session_id, model, tool_name="Claude Agent SDK", silence=False)
     except Exception as e:
