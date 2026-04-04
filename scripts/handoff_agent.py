@@ -379,12 +379,15 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
 PENDING_TASK_TIMEOUT = 60  # seconds to wait for pending tasks after ResultMessage
 
 
-async def run_agent_turn(client, prompt):
-    """Send a prompt to the persistent SDK client. Returns (result_text, cost).
+async def run_agent_turn(client, prompt, send_fn=None):
+    """Send a prompt to the persistent SDK client. Returns cost (float).
 
+    Each non-empty AssistantMessage is sent immediately via send_fn.
     Waits for all background tasks to complete after ResultMessage, with a
-    timeout to avoid blocking indefinitely. This prevents task notifications
-    from leaking into the next turn's message stream.
+    timeout to avoid blocking indefinitely.
+
+    send_fn: callable(text) — sends text to Lark. If None, messages are
+    collected and the last one is returned as (text, cost) for backward compat.
     """
     from claude_agent_sdk import (
         AssistantMessage, TextBlock, ResultMessage,
@@ -395,14 +398,13 @@ async def run_agent_turn(client, prompt):
     _log(f"[turn] query() sending prompt ({len(prompt)} chars)")
     await client.query(prompt)
     _log("[turn] query() sent, starting receive_messages()")
-    result_text = None
-    last_assistant_text = None
     cost = 0.0
     msg_count = 0
     has_assistant_msg = False
     pending_tasks = set()
     got_result = False
     result_time = 0.0
+    last_text = None  # fallback if no send_fn
 
     async for message in client.receive_messages():
         # Timeout check for pending tasks after ResultMessage
@@ -414,15 +416,19 @@ async def run_agent_turn(client, prompt):
 
         if isinstance(message, AssistantMessage):
             has_assistant_msg = True
-            text_len = 0
+            text_parts = []
             for block in message.content:
-                if isinstance(block, TextBlock):
-                    # Don't update response text after first ResultMessage —
-                    # post-result AssistantMessages are task cleanup chatter
-                    if not got_result:
-                        last_assistant_text = block.text
-                    text_len += len(block.text)
+                if isinstance(block, TextBlock) and block.text:
+                    text_parts.append(block.text)
+            text = "\n".join(text_parts)
+            text_len = len(text)
             _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} got_result={got_result}")
+            # Send non-empty text immediately (skip post-result chatter)
+            if text_len > 0 and not got_result:
+                if send_fn:
+                    send_fn(text)
+                    _log(f"[turn] sent {text_len} chars to Lark")
+                last_text = text
 
         elif isinstance(message, TaskStartedMessage):
             pending_tasks.add(message.task_id)
@@ -439,16 +445,15 @@ async def run_agent_turn(client, prompt):
                 break
 
         elif isinstance(message, ResultMessage):
-            result_text = message.result
             cost = getattr(message, "total_cost_usd", 0) or 0.0
             is_error = getattr(message, "is_error", False)
             session_id = getattr(message, "session_id", "")
             stop_reason = getattr(message, "stop_reason", "")
-            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={len(result_text or '')} pending={len(pending_tasks)}")
+            result_len = len(getattr(message, "result", "") or "")
+            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} pending={len(pending_tasks)}")
 
             if not pending_tasks:
                 break  # No pending tasks, end turn normally
-            # Pending tasks exist — continue consuming with timeout
             got_result = True
             result_time = time.time()
             _log(f"[turn] ResultMessage received but {len(pending_tasks)} tasks pending, waiting (timeout={PENDING_TASK_TIMEOUT}s)...")
@@ -457,9 +462,9 @@ async def run_agent_turn(client, prompt):
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
 
     _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
-    # Last AssistantMessage TextBlock has the full response;
-    # ResultMessage.result is often a truncated summary.
-    return (last_assistant_text or result_text), cost
+    if send_fn:
+        return cost
+    return (last_text, cost)
 
 
 def _is_esc_command(text, mentions=None):
@@ -986,7 +991,16 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
                     session,
                 )
-                sdk_task = asyncio.create_task(run_agent_turn(client, user_message))
+                def _send_lark(text):
+                    """Send a message to Lark inline."""
+                    try:
+                        t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                        send_response_inline(t, chat_id, text)
+                    except Exception as e:
+                        _log(f"send error: {e}")
+
+                sdk_task = asyncio.create_task(
+                    run_agent_turn(client, user_message, send_fn=_send_lark))
 
                 done, _ = await asyncio.wait(
                     {sdk_task, monitor_task},
@@ -1042,24 +1056,15 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         # Monitor exited without signal (WS disconnect).
                         # Wait for SDK to finish normally.
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
-                        result, turn_cost = await sdk_task
+                        turn_cost = await sdk_task
                         total_cost += turn_cost
-                        _log(f"Agent turn done. Result length: {len(result) if result else 0}")
-                        if result and result.strip():
-                            token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                            send_response_inline(token, chat_id, result)
-                            _log("Response sent.")
+                        _log("Agent turn done (WS reconnect path).")
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
-                    result, turn_cost = sdk_task.result()
+                    turn_cost = sdk_task.result()
                     total_cost += turn_cost
-                    _log(f"Agent turn done. Result length: {len(result) if result else 0}")
-
-                    if result and result.strip():
-                        token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                        send_response_inline(token, chat_id, result)
-                        _log("Response sent.")
+                    _log("Agent turn done.")
 
                     # Ensure monitor is cleaned up
                     try:
