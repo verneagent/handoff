@@ -1001,13 +1001,38 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     worker_url, chat_id, monitor_since, resolved_profile, stop_event,
                     session,
                 )
+                # Accumulate turn messages into one card (send first, PATCH subsequent)
+                _turn_card_id = [None]  # mutable ref for closure
+                _turn_parts = []       # collected text parts
+
                 def _send_lark(text, task_id=None, pending_tasks=0):
-                    """Send a message to Lark inline."""
+                    """Send or update the turn's response card on Lark."""
                     try:
                         t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                        send_response_inline(t, chat_id, text)
-                        if task_id:
-                            _log(f"Response sent (task={task_id} pending={pending_tasks})")
+                        _turn_parts.append(text)
+                        merged = "\n\n---\n\n".join(_turn_parts)
+
+                        if _turn_card_id[0] is None:
+                            # First message — send new card
+                            send_response_inline(t, chat_id, merged)
+                            # Grab the msg_id from the latest sent message
+                            try:
+                                latest = handoff_db.get_latest_sent_message(session_id)
+                                if latest:
+                                    _turn_card_id[0] = latest["message_id"]
+                            except Exception:
+                                pass
+                            _log(f"Turn card created ({len(text)} chars, card={_turn_card_id[0]})")
+                        else:
+                            # Subsequent messages — PATCH update the same card
+                            card = lark_im.build_markdown_card(merged)
+                            try:
+                                lark_im.update_card_message(t, _turn_card_id[0], card)
+                                _log(f"Turn card updated ({len(text)} chars appended, total={len(merged)})")
+                            except Exception as e:
+                                # PATCH failed — fall back to sending a new card
+                                _log(f"Turn card update failed ({e}), sending new card")
+                                send_response_inline(t, chat_id, text)
                     except Exception as e:
                         _log(f"send error: {e}")
 
