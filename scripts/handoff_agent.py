@@ -417,9 +417,12 @@ async def run_agent_turn(client, prompt):
             text_len = 0
             for block in message.content:
                 if isinstance(block, TextBlock):
-                    last_assistant_text = block.text
+                    # Don't update response text after first ResultMessage —
+                    # post-result AssistantMessages are task cleanup chatter
+                    if not got_result:
+                        last_assistant_text = block.text
                     text_len += len(block.text)
-            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)}")
+            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} got_result={got_result}")
 
         elif isinstance(message, TaskStartedMessage):
             pending_tasks.add(message.task_id)
