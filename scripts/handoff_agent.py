@@ -873,7 +873,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
             if msg_lower in ("/clear", "clear", "清空", "重置"):
                 await _restart_client()
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                send_response_inline(token, chat_id, "Session cleared. Starting fresh.")
+                import datetime
+                local_time = datetime.datetime.now().strftime("%H:%M")
+                card = lark_im.build_card(
+                    "🔄 Session Cleared",
+                    body=f"Context reset at {local_time}. Starting fresh.",
+                    color="orange")
+                lark_im.send_message(token, chat_id, card)
                 continue
 
             # Check /model — switch model dynamically
