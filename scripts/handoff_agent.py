@@ -385,85 +385,117 @@ def _build_agent_options(project_dir, model, credentials=None, chat_id=None,
 
 
 
+def _tool_use_summary(tool_name, tool_input):
+    """Build a brief one-line summary of a tool action for the Working card."""
+    if tool_name == "Bash":
+        desc = tool_input.get("description", "")
+        cmd = tool_input.get("command", "")
+        label = desc or cmd
+        if len(label) > 60:
+            label = label[:57] + "..."
+        return f"`$ {label}`"
+    if tool_name in ("Edit", "Write"):
+        fp = tool_input.get("file_path", "")
+        name = os.path.basename(fp) if fp else "file"
+        return f"`{tool_name}: {name}`"
+    if tool_name == "Read":
+        fp = tool_input.get("file_path", "")
+        name = os.path.basename(fp) if fp else "file"
+        return f"`Read: {name}`"
+    if tool_name in ("Glob", "Grep"):
+        pattern = tool_input.get("pattern", "")
+        if len(pattern) > 40:
+            pattern = pattern[:37] + "..."
+        return f"`{tool_name}: {pattern}`"
+    if tool_name == "Agent":
+        desc = tool_input.get("description", "")
+        return f"`Agent: {desc}`" if desc else "`Agent`"
+    return f"`{tool_name}`"
+
+
 async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
-                         stale_tasks=None):
+                         stale_tasks=None, _retry=0):
     """Send a prompt to the persistent SDK client. Returns (cost, usage).
 
     Each non-empty AssistantMessage is sent immediately via send_fn.
+
+    If a stale TaskNotification from a previous turn is detected, the
+    entire turn response is dropped and the query is re-sent automatically.
 
     send_fn: callable(text, task_id=None, pending_tasks=0) — sends text to
     Lark with optional task context. If None, messages are collected and the
     last one is returned as (text, cost) for backward compat.
     working_fn: callable(action, description="") — manages Working card.
-      action: "start" (create/show), "progress" (update description),
-              "done" (mark completed).
-    stale_tasks: set of task_ids from previous turns whose notifications
-      should be silently consumed (prevents "后台任务已完成" chatter).
+    stale_tasks: set of task_ids from previous turns (mutated in place).
     """
     from claude_agent_sdk import (
-        AssistantMessage, TextBlock, ResultMessage,
+        AssistantMessage, TextBlock, ToolUseBlock, ResultMessage,
         TaskStartedMessage, TaskNotificationMessage,
-        TaskProgressMessage, SystemMessage,
+        TaskProgressMessage,
     )
     if stale_tasks is None:
         stale_tasks = set()
 
-    _log(f"[turn] query() sending prompt ({len(prompt)} chars)")
+    MAX_RETRIES = 5
+
+    _log(f"[turn] query() sending prompt ({len(prompt)} chars) retry={_retry}")
     await client.query(prompt)
-    _log("[turn] query() sent, starting receive_messages()")
+    _log("[turn] query() sent, starting receive_response()")
     cost = 0.0
     usage = {}
     msg_count = 0
     has_assistant_msg = False
     pending_tasks = set()
-    last_text = None  # fallback if no send_fn
+    last_text = None
     working_started = False
-    _skipping_stale = False  # True while consuming stale task aftermath
+    found_stale = False  # True if stale notification detected in this turn
 
-    async for message in client.receive_messages():
+    async for message in client.receive_response():
         msg_count += 1
         msg_type = type(message).__name__
 
-        # Skip residual messages from stale tasks (previous turns).
-        # When a stale TaskNotification arrives, also skip the model's
-        # reaction (AssistantMessage chatter + ResultMessage) until the
-        # next init SystemMessage marks the real query start.
+        # Detect stale task notification from previous turn
         if isinstance(message, TaskNotificationMessage) and message.task_id in stale_tasks:
             stale_tasks.discard(message.task_id)
-            _skipping_stale = True
-            _log(f"[turn] msg#{msg_count} SKIPPED stale TaskNotification task_id={message.task_id}")
-            continue
-        if _skipping_stale:
-            if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
-                _skipping_stale = False
-                _log(f"[turn] msg#{msg_count} init message — stale skip ended")
-                # Fall through to normal handling
-            else:
-                _log(f"[turn] msg#{msg_count} SKIPPED (stale aftermath) {msg_type}")
-                continue
+            found_stale = True
+            _log(f"[turn] msg#{msg_count} STALE TaskNotification task_id={message.task_id} — will re-query")
+            continue  # Let receive_response drain until ResultMessage
 
+        # If stale detected, drop everything until ResultMessage ends the turn
+        if found_stale:
+            if isinstance(message, ResultMessage):
+                cost = getattr(message, "total_cost_usd", 0) or 0.0
+                usage = getattr(message, "usage", None) or {}
+                _log(f"[turn] msg#{msg_count} ResultMessage (stale turn) cost=${cost:.4f}")
+            else:
+                _log(f"[turn] msg#{msg_count} DROPPED (stale turn) {msg_type}")
+            continue
+
+        # Normal message handling
         if isinstance(message, AssistantMessage):
             has_assistant_msg = True
             text_parts = []
+            tool_summary = ""
             for block in message.content:
                 if isinstance(block, TextBlock) and block.text:
                     text_parts.append(block.text)
+                elif isinstance(block, ToolUseBlock):
+                    tool_summary = _tool_use_summary(block.name, block.input)
             text = "\n".join(text_parts)
             text_len = len(text)
-            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)}")
-            # Tool use (no text, has blocks) → start Working card
-            if text_len == 0 and len(message.content) > 0 and not working_started and working_fn:
-                working_fn("start")
-                working_started = True
-            # Send non-empty text immediately
+            _log(f"[turn] msg#{msg_count} AssistantMessage text_len={text_len} blocks={len(message.content)} tool={tool_summary[:60]}")
+            if text_len == 0 and len(message.content) > 0 and working_fn:
+                if not working_started:
+                    working_fn("start", tool_summary)
+                    working_started = True
+                elif tool_summary:
+                    working_fn("progress", tool_summary)
             if text_len > 0:
-                # Determine which task this message belongs to (if any)
                 current_task_id = None
                 parent = getattr(message, "parent_tool_use_id", None)
                 if parent:
-                    # Message from a subagent/task
                     for tid in pending_tasks:
-                        current_task_id = tid  # best guess: latest pending
+                        current_task_id = tid
                         break
                 if send_fn:
                     send_fn(text, task_id=current_task_id,
@@ -492,12 +524,10 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
             session_id = getattr(message, "session_id", "")
             stop_reason = getattr(message, "stop_reason", "")
             result_len = len(getattr(message, "result", "") or "")
-            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} usage={usage} pending={len(pending_tasks)}")
+            _log(f"[turn] msg#{msg_count} ResultMessage cost=${cost:.4f} error={is_error} stop={stop_reason} session={session_id[:12]} has_assistant={has_assistant_msg} result_len={result_len} pending={len(pending_tasks)}")
 
             if pending_tasks:
-                # Model decided the turn is done but background tasks are
-                # still running. Try to cancel them, and mark as stale so
-                # their residual notifications get skipped in the next turn.
+                # Mark pending tasks as stale + try to cancel
                 for tid in list(pending_tasks):
                     stale_tasks.add(tid)
                     try:
@@ -505,14 +535,23 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
                         _log(f"[turn] cancelled pending task {tid}")
                     except Exception as e:
                         _log(f"[turn] cancel task {tid} failed (marked stale): {e}")
-                _log(f"[turn] stale_tasks={stale_tasks}")
                 pending_tasks.clear()
-            break
+            # ResultMessage is handled by receive_response() — it breaks the loop
 
         else:
             _log(f"[turn] msg#{msg_count} {msg_type}: {str(message)[:200]}")
 
-    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)}")
+    _log(f"[turn] receive loop done. msgs={msg_count} has_assistant={has_assistant_msg} pending={len(pending_tasks)} found_stale={found_stale}")
+
+    # If stale notification contaminated this turn, re-query
+    if found_stale and _retry < MAX_RETRIES:
+        _log(f"[turn] stale turn detected — re-querying (retry {_retry + 1}/{MAX_RETRIES})")
+        if working_fn and working_started:
+            working_fn("done")
+        return await run_agent_turn(
+            client, prompt, send_fn=send_fn, working_fn=working_fn,
+            stale_tasks=stale_tasks, _retry=_retry + 1)
+
     if working_fn and working_started:
         working_fn("done")
     if send_fn:
@@ -799,49 +838,56 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     total_cost = 0.0
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
     _stale_tasks = set()   # Task IDs from previous turns to skip
-    _context_warned = False  # Only warn once per session about high context usage
-    _CONTEXT_WARN_THRESHOLD = 0.8  # Warn at 80%
-
-    def _get_context_limit():
-        """Return context window size for the current model."""
-        # Model family → context window (tokens).
-        # Update when Anthropic ships models with different windows.
-        _limits = {
-            "claude-opus-4": 200_000,
-            "claude-sonnet-4": 200_000,
-            "claude-haiku-4": 200_000,
-            "claude-3-5": 200_000,
-            "claude-3-opus": 200_000,
-            "claude-3-haiku": 200_000,
-        }
-        for prefix, limit in _limits.items():
-            if model.startswith(prefix):
-                return limit
-        return 200_000  # safe default for unknown models
+    _prev_input_tokens = [0]  # Track previous turn's input_tokens
+    _high_warned = False       # Pre-compaction warning sent
+    _compaction_notified = False  # Post-compaction notification sent
+    # Warn threshold: env var or 80% of context window from server_info
+    _warn_threshold = int(os.environ.get("CLAUDE_CONTEXT_WARN_TOKENS", 0))
 
     def _check_context_usage(turn_usage):
-        nonlocal _context_warned
-        if _context_warned or not turn_usage:
+        nonlocal _high_warned, _compaction_notified
+        if not turn_usage:
             return
         input_tokens = turn_usage.get("input_tokens", 0)
-        context_limit = _get_context_limit()
         if input_tokens <= 0:
             return
-        ratio = input_tokens / context_limit
-        _log(f"[context] input_tokens={input_tokens} limit={context_limit} usage={ratio:.1%}")
-        if ratio >= _CONTEXT_WARN_THRESHOLD:
-            _context_warned = True
-            pct = int(ratio * 100)
+        prev = _prev_input_tokens[0]
+        _prev_input_tokens[0] = input_tokens
+        _log(f"[context] input_tokens={input_tokens:,} prev={prev:,}")
+
+        # Post-compaction: input_tokens drops sharply
+        if prev > 0 and input_tokens < prev * 0.6:
+            _high_warned = False  # Reset so it can warn again after next growth
+            if not _compaction_notified:
+                _compaction_notified = True
+                try:
+                    t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
+                    card = lark_im.build_card(
+                        "⚠️ Context Compacted",
+                        body=f"Tokens: **{prev:,}** → **{input_tokens:,}**\n\n"
+                             f"Earlier details may be lost. "
+                             f"`/clear` to start fresh.",
+                        color="orange")
+                    lark_im.send_message(t, chat_id, card)
+                except Exception as e:
+                    _log(f"compaction notify error: {e}")
+            return
+
+        _compaction_notified = False  # Reset after recovery
+
+        # Pre-compaction: warn when tokens exceed threshold
+        if _warn_threshold and not _high_warned and input_tokens >= _warn_threshold:
+            _high_warned = True
             try:
                 t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 card = lark_im.build_card(
-                    f"⚠️ Context {pct}%",
-                    body=f"Input tokens: **{input_tokens:,}** / {context_limit:,}\n\n"
-                         f"Context is getting full. Use `/clear` to reset if needed.",
+                    f"⚠️ Context {input_tokens:,} tokens",
+                    body=f"Approaching context limit (threshold: {_warn_threshold:,}).\n\n"
+                         f"`/clear` to reset if needed.",
                     color="orange")
                 lark_im.send_message(t, chat_id, card)
             except Exception as e:
-                _log(f"context warning send error: {e}")
+                _log(f"context warning error: {e}")
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -860,6 +906,24 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     client = ClaudeSDKClient(options=state["options"])
     await client.__aenter__()
     _log("Agent SDK client initialized")
+
+    # Auto-detect warn threshold from server_info if not set via env
+    if not _warn_threshold:
+        try:
+            server_info = await client.get_server_info()
+            if server_info and isinstance(server_info, dict):
+                for m in server_info.get("models", []):
+                    desc = m.get("description", "")
+                    match = re.search(r"(\d+(?:\.\d+)?)\s*([KkMm])\s*context", desc)
+                    if match:
+                        num = float(match.group(1))
+                        unit = match.group(2).upper()
+                        limit = int(num * (1_000_000 if unit == "M" else 1_000))
+                        _warn_threshold = int(limit * 0.8)
+                        _log(f"[context] warn threshold={_warn_threshold:,} (80% of {limit:,} from '{desc}')")
+                        break
+        except Exception as e:
+            _log(f"[context] server_info failed: {e}")
 
     async def _restart_client():
         nonlocal client
@@ -941,7 +1005,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             # Check /clear
             if msg_lower in ("/clear", "clear", "清空", "重置"):
-                _context_warned = False
+                _prev_input_tokens[0] = 0
+                _high_warned = False
+                _compaction_notified = False
                 await _restart_client()
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 import datetime
@@ -1267,8 +1333,9 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     except Exception:
                         pass
 
-                # Pending tasks are cancelled in run_agent_turn via
-                # client.stop_task(). No timeout/restart needed.
+                # Stale task handling: run_agent_turn detects stale
+                # TaskNotifications, drops the contaminated response,
+                # and re-queries automatically.
 
             except Exception as e:
                 _log(f"Agent error: {e}")
