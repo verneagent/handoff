@@ -103,7 +103,7 @@ def resolve_session_context():
 
 
 def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=None,
-               extra_value=None):
+               extra_value=None, note=None):
     """Build a card dict with optional action buttons.
 
     buttons: list of (label, action_value, button_type) tuples.
@@ -112,6 +112,7 @@ def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=N
     nonce: optional unique ID for correlating this card's button clicks
         with the specific poll loop waiting for them.
     extra_value: optional dict merged into each button's value payload.
+    note: optional string for a grey footnote at the bottom of the card.
     """
     elements = []
     if body and body.strip():
@@ -143,6 +144,11 @@ def build_card(title, body="", color="blue", buttons=None, chat_id=None, nonce=N
                 }
             )
         elements.append({"tag": "action", "actions": actions})
+    if note:
+        elements.append({
+            "tag": "note",
+            "elements": [{"tag": "plain_text", "content": note}],
+        })
     return {
         "header": {
             "title": {"tag": "plain_text", "content": title},

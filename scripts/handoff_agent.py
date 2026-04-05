@@ -547,13 +547,13 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
     if found_stale and _retry < MAX_RETRIES:
         _log(f"[turn] stale turn detected — re-querying (retry {_retry + 1}/{MAX_RETRIES})")
         if working_fn and working_started:
-            working_fn("done")
+            working_fn("done", usage=usage)
         return await run_agent_turn(
             client, prompt, send_fn=send_fn, working_fn=working_fn,
             stale_tasks=stale_tasks, _retry=_retry + 1)
 
     if working_fn and working_started:
-        working_fn("done")
+        working_fn("done", usage=usage)
     if send_fn:
         return (cost, usage)
     return (last_text, cost, usage)
@@ -838,57 +838,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     total_cost = 0.0
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
     _stale_tasks = set()   # Task IDs from previous turns to skip
-    _prev_input_tokens = [0]  # Track previous turn's input_tokens
-    _high_warned = False       # Pre-compaction warning sent
-    _compaction_notified = False  # Post-compaction notification sent
-    # Warn threshold: env var or 80% of context window from server_info
-    _warn_threshold = int(os.environ.get("CLAUDE_CONTEXT_WARN_TOKENS", 0))
-
-    def _check_context_usage(turn_usage):
-        nonlocal _high_warned, _compaction_notified
-        if not turn_usage:
-            return
-        input_tokens = turn_usage.get("input_tokens", 0)
-        if input_tokens <= 0:
-            return
-        prev = _prev_input_tokens[0]
-        _prev_input_tokens[0] = input_tokens
-        _log(f"[context] input_tokens={input_tokens:,} prev={prev:,}")
-
-        # Post-compaction: input_tokens drops sharply
-        if prev > 0 and input_tokens < prev * 0.6:
-            _high_warned = False  # Reset so it can warn again after next growth
-            if not _compaction_notified:
-                _compaction_notified = True
-                try:
-                    t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                    card = lark_im.build_card(
-                        "⚠️ Context Compacted",
-                        body=f"Tokens: **{prev:,}** → **{input_tokens:,}**\n\n"
-                             f"Earlier details may be lost. "
-                             f"`/clear` to start fresh.",
-                        color="orange")
-                    lark_im.send_message(t, chat_id, card)
-                except Exception as e:
-                    _log(f"compaction notify error: {e}")
-            return
-
-        _compaction_notified = False  # Reset after recovery
-
-        # Pre-compaction: warn when tokens exceed threshold
-        if _warn_threshold and not _high_warned and input_tokens >= _warn_threshold:
-            _high_warned = True
-            try:
-                t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
-                card = lark_im.build_card(
-                    f"⚠️ Context {input_tokens:,} tokens",
-                    body=f"Approaching context limit (threshold: {_warn_threshold:,}).\n\n"
-                         f"`/clear` to reset if needed.",
-                    color="orange")
-                lark_im.send_message(t, chat_id, card)
-            except Exception as e:
-                _log(f"context warning error: {e}")
-
     def handle_signal(sig, frame):
         nonlocal running
         _log("Signal received. Shutting down...")
@@ -906,24 +855,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     client = ClaudeSDKClient(options=state["options"])
     await client.__aenter__()
     _log("Agent SDK client initialized")
-
-    # Auto-detect warn threshold from server_info if not set via env
-    if not _warn_threshold:
-        try:
-            server_info = await client.get_server_info()
-            if server_info and isinstance(server_info, dict):
-                for m in server_info.get("models", []):
-                    desc = m.get("description", "")
-                    match = re.search(r"(\d+(?:\.\d+)?)\s*([KkMm])\s*context", desc)
-                    if match:
-                        num = float(match.group(1))
-                        unit = match.group(2).upper()
-                        limit = int(num * (1_000_000 if unit == "M" else 1_000))
-                        _warn_threshold = int(limit * 0.8)
-                        _log(f"[context] warn threshold={_warn_threshold:,} (80% of {limit:,} from '{desc}')")
-                        break
-        except Exception as e:
-            _log(f"[context] server_info failed: {e}")
 
     async def _restart_client():
         nonlocal client
@@ -1005,9 +936,6 @@ async def main_loop(chat_id, project_dir, model, profile=None):
 
             # Check /clear
             if msg_lower in ("/clear", "clear", "清空", "重置"):
-                _prev_input_tokens[0] = 0
-                _high_warned = False
-                _compaction_notified = False
                 await _restart_client()
                 token = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
                 import datetime
@@ -1210,7 +1138,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                     (90, "Working incredibly hard..."), (120, "Working unreasonably hard..."),
                 ]
 
-                def _working_fn(action, description=""):
+                def _working_fn(action, description="", usage=None):
                     """Manage Working card: start/progress/done."""
                     try:
                         t = lark_im.get_tenant_token(credentials["app_id"], credentials["app_secret"])
@@ -1230,7 +1158,7 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                                 if elapsed >= threshold:
                                     title = t_str
                             card = lark_im.build_card(
-                                title, body=f"`{description}`" if description else "", color="grey",
+                                title, body=description or "", color="grey",
                                 buttons=[("Stop", "__stop__", "default")],
                                 chat_id=chat_id)
                             try:
@@ -1243,7 +1171,18 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                                 body = f"Completed in {elapsed}s"
                             else:
                                 body = f"Completed in {elapsed // 60}m {elapsed % 60}s"
-                            card = lark_im.build_card("Done ✓", body=body, color="green")
+                            note = None
+                            if usage:
+                                parts = []
+                                inp = usage.get("input_tokens")
+                                out = usage.get("output_tokens")
+                                if inp:
+                                    parts.append(f"in: {inp:,}")
+                                if out:
+                                    parts.append(f"out: {out:,}")
+                                if parts:
+                                    note = " | ".join(parts)
+                            card = lark_im.build_card("Done ✓", body=body, color="green", note=note)
                             try:
                                 lark_im.update_card_message(t, _working_msg_id[0], card)
                             except Exception:
@@ -1315,15 +1254,13 @@ async def main_loop(chat_id, project_dir, model, profile=None):
                         _log("Monitor exited (WS disconnect) — waiting for SDK to finish")
                         turn_cost, turn_usage = await sdk_task
                         total_cost += turn_cost
-                        _check_context_usage(turn_usage)
-                        _log("Agent turn done (WS reconnect path).")
+                        _log(f"Agent turn done (WS reconnect path). usage={turn_usage}")
                 else:
                     # SDK finished first — stop monitor
                     stop_event.set()
                     turn_cost, turn_usage = sdk_task.result()
                     total_cost += turn_cost
-                    _check_context_usage(turn_usage)
-                    _log("Agent turn done.")
+                    _log(f"Agent turn done. usage={turn_usage}")
 
                     # Ensure monitor is cleaned up
                     try:
