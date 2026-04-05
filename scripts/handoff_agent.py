@@ -419,8 +419,16 @@ async def run_agent_turn(client, prompt, send_fn=None, working_fn=None,
 
     Each non-empty AssistantMessage is sent immediately via send_fn.
 
-    If a stale TaskNotification from a previous turn is detected, the
-    entire turn response is dropped and the query is re-sent automatically.
+    Stale task workaround (anthropics/claude-agent-sdk-python#788):
+    When a background task completes between turns, its TaskNotification
+    leaks into the next receive_response() call. The model responds to
+    the stale notification instead of the user's new prompt. This is a
+    known SDK bug with no upstream fix yet.
+
+    Workaround: on ResultMessage, mark pending tasks as stale. In the
+    next turn, if a stale TaskNotification is detected, drop the entire
+    contaminated response and re-query with the same prompt. Up to
+    MAX_RETRIES attempts.
 
     send_fn: callable(text, task_id=None, pending_tasks=0) — sends text to
     Lark with optional task context. If None, messages are collected and the
@@ -837,7 +845,8 @@ async def main_loop(chat_id, project_dir, model, profile=None):
     msg_count = 0
     total_cost = 0.0
     _prev_monitor = None   # Track previous monitor task to ensure WS cleanup
-    _stale_tasks = set()   # Task IDs from previous turns to skip
+    _stale_tasks = set()   # Workaround for SDK bug #788: task IDs whose
+                           # notifications may leak into the next turn
     def handle_signal(sig, frame):
         nonlocal running
         _log("Signal received. Shutting down...")
